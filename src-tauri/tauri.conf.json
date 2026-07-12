@@ -15,13 +15,14 @@
         "title": "PlaiNotes",
         "width": 1180,
         "height": 760,
-        "minWidth": 760,
-        "minHeight": 480,
+        "minWidth": 370,
+        "minHeight": 370,
         "resizable": true,
         "decorations": false,
         "transparent": true,
-        "shadow": true,
-        "center": true
+        "shadow": false,
+        "center": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

@@ -1,8 +1,107 @@
 @import "tailwindcss";
+@import "@milkdown/kit/prose/view/style/prosemirror.css";
+@import "@milkdown/kit/prose/tables/style/tables.css";
+@import "@milkdown/kit/prose/gapcursor/style/gapcursor.css";
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --accent-rgb: 99 102 241;
 }
+
+/* ---------- Theme: Light (Apple Notes-inspired, default) ---------- */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --app-bg: #f2f1ec;
+  --app-bg-image: radial-gradient(1200px 500px at 15% -10%, rgb(var(--accent-rgb) / 0.08), transparent 60%),
+    radial-gradient(900px 500px at 100% 10%, rgb(var(--accent-rgb) / 0.05), transparent 55%);
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --surface-hover: rgba(0, 0, 0, 0.045);
+  --surface-active: rgb(var(--accent-rgb) / 0.1);
+  --border: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --text-primary: #1c1c1e;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #9a9a9e;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 28px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.16);
+  --success: #15803d;
+  --success-soft: rgba(21, 128, 61, 0.12);
+  --success-border: rgba(21, 128, 61, 0.3);
+  --danger: #b91c1c;
+  --danger-soft: rgba(185, 28, 28, 0.1);
+  --danger-border: rgba(185, 28, 28, 0.28);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.16);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  --selection: rgb(var(--accent-rgb) / 0.22);
+  --icon-outline: #000000;
+}
+
+/* ---------- Theme: Midnight (glassmorphism dark) ---------- */
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --app-bg: #0a0a10;
+  --app-bg-image: radial-gradient(1200px 500px at 15% -10%, rgb(var(--accent-rgb) / 0.22), transparent 60%),
+    radial-gradient(900px 500px at 100% 10%, rgb(168 85 247 / 0.16), transparent 55%),
+    linear-gradient(180deg, #0b0c14 0%, #0a0a10 100%);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-strong: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --surface-active: rgb(var(--accent-rgb) / 0.15);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 28px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  --success: #6ee7b7;
+  --success-soft: rgba(52, 211, 153, 0.15);
+  --success-border: rgba(52, 211, 153, 0.35);
+  --danger: #fda4af;
+  --danger-soft: rgba(251, 113, 133, 0.15);
+  --danger-border: rgba(251, 113, 133, 0.35);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+  --selection: rgb(var(--accent-rgb) / 0.35);
+  --icon-outline: #ffffff;
+}
+
+/* ---------- Background style: controls blur/translucency intensity ---------- */
+:root,
+:root[data-bg="soft"] {
+  --panel-blur: 20px;
+}
+:root[data-bg="flat"] {
+  --panel-blur: 0px;
+}
+:root[data-theme="light"][data-bg="flat"] {
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+}
+:root[data-theme="midnight"][data-bg="flat"] {
+  --surface: #14141c;
+  --surface-strong: #181820;
+}
+:root[data-bg="glass"] {
+  --panel-blur: 32px;
+}
+:root[data-theme="light"][data-bg="glass"] {
+  --surface: rgba(255, 255, 255, 0.62);
+  --surface-strong: rgba(255, 255, 255, 0.74);
+}
+:root[data-theme="midnight"][data-bg="glass"] {
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-strong: rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- Accent colors ---------- */
+:root[data-accent="violet"] { --accent-rgb: 139 92 246; }
+:root[data-accent="blue"] { --accent-rgb: 59 130 246; }
+:root[data-accent="rose"] { --accent-rgb: 244 63 94; }
+:root[data-accent="amber"] { --accent-rgb: 217 119 6; }
+:root[data-accent="emerald"] { --accent-rgb: 5 150 105; }
 
 html,
 body,
@@ -24,6 +123,7 @@ body {
   text-rendering: optimizeLegibility;
   overflow: hidden;
   user-select: none;
+  color: var(--text-primary);
 }
 
 /* Text areas and inputs remain selectable/interactive */
@@ -34,13 +134,13 @@ input,
 }
 
 ::selection {
-  background: rgba(129, 140, 248, 0.35);
+  background: var(--selection);
 }
 
-/* Slim, unobtrusive scrollbars that fit the glass aesthetic */
+/* Slim, unobtrusive scrollbars that fit the app aesthetic */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -53,26 +153,81 @@ input,
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.14);
+  background-color: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.24);
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 @layer components {
+  .app-shell {
+    background-color: var(--app-bg);
+    background-image: var(--app-bg-image);
+    transition: background-color 0.2s ease;
+  }
+
   .glass-panel {
-    @apply bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08];
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
   }
 
   .glass-surface {
-    @apply bg-white/[0.06] backdrop-blur-xl border border-white/10;
+    background: var(--surface-strong);
+    border: 1px solid var(--border-strong);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center rounded-lg text-slate-300/80 transition-colors duration-150 hover:bg-white/10 hover:text-slate-50;
+    @apply inline-flex items-center justify-center rounded-lg transition-colors duration-150;
+    color: var(--text-secondary);
   }
+  .btn-ghost:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .menu-item {
+    @apply transition-colors duration-150;
+  }
+  .menu-item:hover {
+    background: var(--surface-hover);
+  }
+  .menu-item-danger:hover {
+    background: var(--danger-soft);
+  }
+
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-tertiary { color: var(--text-tertiary); }
+  .text-icon-outline { color: var(--icon-outline); }
+  .text-accent { color: rgb(var(--accent-rgb)); }
+  .text-danger { color: var(--danger); }
+  .text-success { color: var(--success); }
+
+  .bg-accent-solid { background-color: rgb(var(--accent-rgb) / 0.85); }
+  .bg-accent-soft { background-color: rgb(var(--accent-rgb) / 0.14); }
+  .bg-surface-hover { background-color: var(--surface-hover); }
+  .bg-surface-active { background-color: var(--surface-active); }
+  .bg-success-soft { background-color: var(--success-soft); }
+  .bg-danger-soft { background-color: var(--danger-soft); }
+
+  .border-subtle { border-color: var(--border); }
+  .border-subtle-strong { border-color: var(--border-strong); }
+  .border-accent-soft { border-color: rgb(var(--accent-rgb) / 0.4); }
+  .border-success-soft { border-color: var(--success-border); }
+  .border-danger-soft { border-color: var(--danger-border); }
+
+  .divider { background-color: var(--border); }
+
+  .shadow-app { box-shadow: var(--shadow-soft); }
+  .shadow-app-lg { box-shadow: var(--shadow-lg); }
+
+  .drop-target-root { box-shadow: inset 0 0 0 1.5px rgb(var(--accent-rgb) / 0.4); }
 }
 
 @keyframes card-in {
@@ -88,4 +243,574 @@ input,
 
 .animate-card-in {
   animation: card-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out;
+}
+
+.prose-note {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.prose-note h1 { font-size: 1.6em; font-weight: 700; margin: 0.4em 0 0.3em; }
+.prose-note h2 { font-size: 1.3em; font-weight: 700; margin: 0.9em 0 0.3em; }
+.prose-note h3 { font-size: 1.1em; font-weight: 600; margin: 0.8em 0 0.25em; }
+.prose-note p { margin: 0.15em 0; }
+/* Tailwind's preflight resets ul/ol to `list-style: none`, so the markers
+   have to be restored explicitly or bullet/numbered lists render as plain
+   indented text with no visible bullet or number. */
+.prose-note ul { list-style: disc; margin: 0.5em 0; padding-left: 1.4em; }
+.prose-note ol { list-style: decimal; margin: 0.5em 0; padding-left: 1.4em; }
+.prose-note ul ul { list-style-type: circle; }
+.prose-note ul ul ul { list-style-type: square; }
+.prose-note li { margin: 0.25em 0; }
+.prose-note li::marker { color: var(--text-secondary); }
+.prose-note code {
+  background: var(--surface-hover);
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+  font-size: 0.9em;
+}
+.prose-note pre {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9em 1em;
+  overflow-x: auto;
+}
+.prose-note pre code { background: none; padding: 0; }
+
+/* ---------- Code block (see milkdown/codeBlock.ts) ---------- */
+/* Fenced code blocks render via a CodeMirror 6 node view instead of a plain
+   <pre>, so this - not `.prose-note pre` above - is what actually ships. The
+   `.milkdown-code-block-placeholder` fallback (shown before CodeMirror mounts,
+   see node-view.ts) reuses the `pre`/`code` rule above so there's no flash of
+   unstyled content. Colors are fixed to a VSCode-dark palette regardless of
+   the app's own light/midnight theme - see codeBlock.ts for why. */
+.prose-note .milkdown-code-block {
+  position: relative;
+  margin: 0.8em 0;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: #282c34;
+  font-size: 0.9em;
+  display: flex;
+  flex-direction: column;
+  /* Native drag-to-resize handle in the bottom-right corner - the node view's
+     `stopEvent()` returning true keeps ProseMirror from ever intercepting the
+     drag. `overflow: auto` (rather than `hidden`) is required for `resize` to
+     take effect; `.codemirror-host` below fills the space it creates, so no
+     scrollbar actually shows on the wrapper itself in normal use. Not
+     persisted - it's a per-session editing convenience, not saved to the
+     note's markdown. */
+  resize: both;
+  overflow: auto;
+  min-width: 260px;
+  max-width: 100%;
+  min-height: 140px;
+  /* ~350px of visible code under the ~34px tools bar. */
+  height: 384px;
+}
+.prose-note .milkdown-code-block.selected {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+  outline-offset: -1px;
+}
+.prose-note .milkdown-code-block .milkdown-code-block-placeholder {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: #abb2bf;
+  padding: 0.9em 1em;
+  overflow: hidden;
+}
+.prose-note .milkdown-code-block .tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.35em 0.6em;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.prose-note .milkdown-code-block .tools-button-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
+}
+.prose-note .milkdown-code-block .language-button {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  color: #9da5b4;
+  font-size: 0.8em;
+  font-family: ui-monospace, monospace;
+  padding: 0.2em 0.55em;
+  border-radius: 6px;
+}
+.prose-note .milkdown-code-block .language-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d7dae0;
+}
+.prose-note .milkdown-code-block .expand-icon {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+/* Hidden in favor of the floating remove button (see codeBlockGrips.ts),
+   which takes this slot in the tools bar instead. */
+.prose-note .milkdown-code-block .copy-button {
+  display: none;
+}
+.prose-note .milkdown-code-block .language-picker {
+  position: fixed;
+  z-index: 60;
+}
+.prose-note .milkdown-code-block .list-wrapper {
+  width: 220px;
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: #21252b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.prose-note .milkdown-code-block .search-box {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.4em 0.6em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.prose-note .milkdown-code-block .search-icon,
+.prose-note .milkdown-code-block .clear-icon {
+  font-size: 0.75em;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.prose-note .milkdown-code-block .clear-icon {
+  cursor: pointer;
+}
+.prose-note .milkdown-code-block .clear-icon.hidden {
+  visibility: hidden;
+}
+.prose-note .milkdown-code-block .search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: #d7dae0;
+  font-size: 0.85em;
+}
+.prose-note .milkdown-code-block .language-list {
+  overflow-y: auto;
+  padding: 0.25em;
+}
+.prose-note .milkdown-code-block .language-list-item {
+  padding: 0.35em 0.6em;
+  border-radius: 5px;
+  font-size: 0.85em;
+  color: #d7dae0;
+  cursor: pointer;
+}
+.prose-note .milkdown-code-block .language-list-item:hover,
+.prose-note .milkdown-code-block .language-list-item[aria-selected="true"] {
+  background: rgb(var(--accent-rgb) / 0.35);
+}
+.prose-note .milkdown-code-block .language-list-item.no-result {
+  color: #6b7280;
+  cursor: default;
+}
+.prose-note .milkdown-code-block .language-list-item.no-result:hover {
+  background: none;
+}
+.prose-note .milkdown-code-block .codemirror-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.prose-note .milkdown-code-block .codemirror-host.hidden {
+  display: none;
+}
+.prose-note .milkdown-code-block .cm-editor {
+  outline: none;
+}
+.prose-note .milkdown-code-block .cm-scroller {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+/* Floating remove button (see milkdown/codeBlockGrips.ts) - overlaid in the
+   tools bar's Copy button slot rather than an actual child of it, since that
+   bar belongs to the vendored code-block component's own Vue tree. Colors
+   match the code block's own fixed VSCode-dark chrome (like `.copy-button`
+   did) rather than the app's light/midnight `--danger` tokens, since it
+   sits on that dark bar regardless of the app's theme. */
+.code-block-delete-btn {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #9da5b4;
+  font-size: 1.15em;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.1s ease, background-color 0.1s ease;
+}
+.code-block-delete-btn:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.15);
+}
+.prose-note blockquote {
+  border-left: 3px solid rgb(var(--accent-rgb) / 0.5);
+  margin: 0.8em 0;
+  padding: 0.1em 0 0.1em 1em;
+  color: var(--text-secondary);
+}
+.prose-note hr { border: none; border-top: 2px solid var(--border-strong); margin: 1.5em 0; }
+.prose-note a { color: rgb(var(--accent-rgb)); text-decoration: underline; }
+
+/* ---------- Text decoration marks (see textDecorationMarks.ts) ---------- */
+/* Colors mirror SketchToolbar's SKETCH_COLORS so a highlight mark reads the
+   same whether it was drawn as a gesture or stayed freeform ink. Backgrounds
+   sit *under* the text glyphs (unlike freeform highlighter ink, which is a
+   translucent stroke painted *over* already-rendered text), so alpha is
+   tuned per theme rather than reused verbatim from SketchLayer's
+   HIGHLIGHTER_ALPHA. */
+.prose-note mark {
+  border-radius: 0.15em;
+  padding: 0.02em 0.05em;
+  color: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.prose-note mark[data-color="#3b82f6"] { background: rgba(59, 130, 246, 0.35); }
+.prose-note mark[data-color="#ef4444"] { background: rgba(239, 68, 68, 0.35); }
+.prose-note mark[data-color="#f97316"] { background: rgba(249, 115, 22, 0.35); }
+.prose-note mark[data-color="#eab308"] { background: rgba(234, 179, 8, 0.35); }
+.prose-note mark[data-color="#22c55e"] { background: rgba(34, 197, 94, 0.32); }
+.prose-note mark[data-color="#a855f7"] { background: rgba(168, 85, 247, 0.3); }
+.prose-note mark[data-color="#1c1c1e"] { background: rgba(28, 28, 30, 0.25); }
+
+:root[data-theme="midnight"] .prose-note mark[data-color="#3b82f6"] { background: rgba(59, 130, 246, 0.42); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#ef4444"] { background: rgba(239, 68, 68, 0.42); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#f97316"] { background: rgba(249, 115, 22, 0.42); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#eab308"] { background: rgba(234, 179, 8, 0.4); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#22c55e"] { background: rgba(34, 197, 94, 0.4); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#a855f7"] { background: rgba(168, 85, 247, 0.42); }
+:root[data-theme="midnight"] .prose-note mark[data-color="#1c1c1e"] { background: rgba(241, 245, 249, 0.14); }
+
+.prose-note u { text-decoration-line: underline; text-underline-offset: 0.12em; }
+.prose-note del, .prose-note s { text-decoration-line: line-through; }
+.prose-note table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+  font-size: 0.92em;
+}
+.prose-note th, .prose-note td {
+  border: 1px solid var(--border);
+  padding: 0.45em 0.7em;
+  text-align: left;
+}
+.prose-note th { background: var(--surface-hover); font-weight: 600; }
+
+/* ---------- Milkdown WYSIWYG editor ---------- */
+.prose-note :is(.ProseMirror) {
+  outline: none;
+  min-height: 100%;
+}
+.prose-note .ProseMirror-selectednode {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+  border-radius: 4px;
+}
+.prose-note .column-resize-handle {
+  background-color: rgb(var(--accent-rgb) / 0.5);
+}
+.prose-note .ProseMirror-gapcursor:after {
+  border-top-color: var(--text-secondary);
+}
+
+/* ---------- Table hover grips (insert/delete/resize rows & columns) ---------- */
+.table-grip-bar {
+  position: absolute;
+  z-index: 5;
+}
+.table-grip-col-bar {
+  /* Clipped to the table's scrollable wrapper's visible width so segments
+     for columns scrolled out of view don't float past it - see tableGrips.ts. */
+  overflow: hidden;
+}
+.table-grip-segment {
+  position: absolute;
+}
+.table-grip-col-segment { top: 0; height: 100%; }
+.table-grip-row-segment { left: 0; width: 100%; }
+.table-grip-handle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.1s ease, color 0.1s ease, background-color 0.1s ease;
+}
+.table-grip-segment:hover .table-grip-handle {
+  opacity: 1;
+}
+.table-grip-handle:hover {
+  background: rgb(var(--accent-rgb) / 0.15);
+  border-color: rgb(var(--accent-rgb) / 0.4);
+  color: rgb(var(--accent-rgb));
+}
+.table-row-resize-handle {
+  position: absolute;
+  z-index: 10;
+  left: 2px;
+  right: 2px;
+  bottom: -4px;
+  height: 6px;
+  cursor: row-resize;
+  pointer-events: auto;
+  border-radius: 3px;
+}
+.table-row-resize-handle:hover {
+  background: rgb(var(--accent-rgb) / 0.35);
+}
+.table-row-resize-ghost {
+  position: fixed;
+  z-index: 70;
+  height: 2px;
+  background: rgb(var(--accent-rgb) / 0.7);
+  pointer-events: none;
+}
+.table-grip-add-btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1px dashed var(--border-strong);
+  background: var(--surface);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  /* Independent siblings positioned directly (see tableGrips.ts), not
+     nested in a bar - kept faintly visible rather than hover-revealed
+     since there's no shared parent left to hook a hover state off of. */
+  opacity: 0.45;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+.table-grip-add-btn:hover {
+  opacity: 1;
+  color: rgb(var(--accent-rgb));
+  border-color: rgb(var(--accent-rgb) / 0.6);
+}
+.table-grip-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  background: var(--surface-strong);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+}
+.table-grip-menu-item {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.table-grip-menu-item:hover { background: var(--surface-hover); }
+.table-grip-menu-item.danger { color: var(--danger); }
+.table-grip-menu-item.danger:hover { background: var(--danger-soft); }
+:root {
+  --default-cell-min-width: 100px;
+}
+
+/* Task list checkboxes: GFM renders `<li data-item-type="task" data-checked="...">`
+   with no real input element, so the box is drawn with ::before and toggled
+   by src/milkdown/taskListToggle.ts (a click-position based ProseMirror plugin). */
+.prose-note li[data-item-type="task"] {
+  list-style: none;
+  margin-left: -1.4em;
+  padding-left: 1.6em;
+  position: relative;
+}
+.prose-note li[data-item-type="task"]::before {
+  content: "";
+  position: absolute;
+  left: 0.1em;
+  top: 0.3em;
+  width: 1.1em;
+  height: 1.1em;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.prose-note li[data-item-type="task"][data-checked="true"]::before {
+  background: rgb(var(--accent-rgb) / 0.85);
+  border-color: rgb(var(--accent-rgb) / 0.85);
+}
+.prose-note li[data-item-type="task"][data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0.42em;
+  top: 0.45em;
+  width: 0.32em;
+  height: 0.6em;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.prose-note li[data-item-type="task"][data-checked="true"] > p {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+/* Images */
+.milkdown-image-view {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0.4em 0;
+}
+.milkdown-image-view img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.milkdown-image-view.selected img {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+}
+
+/* Flashcard / MCQ block */
+.flashcard-node {
+  margin: 1em 0;
+  padding: 1em 1.1em;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+.flashcard-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.flashcard-node-badge {
+  font-size: 0.72em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--accent-rgb));
+}
+.flashcard-node-remove {
+  color: var(--text-tertiary);
+  font-size: 1.1em;
+  line-height: 1;
+  border-radius: 6px;
+  padding: 0.1em 0.4em;
+}
+.flashcard-node-remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.flashcard-node-question {
+  font-size: 1.02em;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  padding: 0;
+}
+.flashcard-node-answer {
+  font-size: 0.92em;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5em 0.7em;
+  outline: none;
+  font-family: inherit;
+}
+.flashcard-node-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+.flashcard-node-option-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.flashcard-node-option-input {
+  flex: 1;
+  font-size: 0.92em;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4em 0.6em;
+  outline: none;
+  font-family: inherit;
+}
+.flashcard-node-option-remove {
+  color: var(--text-tertiary);
+  padding: 0 0.3em;
+}
+.flashcard-node-option-remove:hover {
+  color: var(--danger);
+}
+.flashcard-node-add {
+  align-self: flex-start;
+  font-size: 0.82em;
+  color: var(--text-secondary);
+  padding: 0.2em 0.1em;
+}
+.flashcard-node-add:hover {
+  color: rgb(var(--accent-rgb));
 }

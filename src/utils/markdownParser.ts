@@ -3,8 +3,15 @@ import type { Flashcard, MultipleChoice, StudyItem } from "../types";
 // Study syntax (each on its own line within a note):
 //   Q: <question> -> A: <answer>
 //   MCQ: <question> | <option 1, option 2, option 3> | <correct option>
-const FLASHCARD_PATTERN = /^Q:\s*(.+?)\s*->\s*A:\s*(.+)$/i;
-const MCQ_PATTERN = /^MCQ:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$/i;
+// Exported so the Milkdown flashcard node (src/milkdown/flashcardNode.ts) can
+// detect/round-trip the exact same syntax without the two ever drifting apart.
+// Capture groups allow zero-length matches (`.*`, not `.+`) so a card whose
+// fields haven't been filled in yet still round-trips through Markdown as a
+// flashcard/MCQ node instead of falling back to unparsed paragraph text -
+// completeness (non-empty question/answer/options) is checked separately
+// below, only when deciding whether a line is a usable *study item*.
+export const FLASHCARD_PATTERN = /^Q:\s*(.*?)\s*->\s*A:\s*(.*)$/i;
+export const MCQ_PATTERN = /^MCQ:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*)$/i;
 
 function parseFlashcardLine(line: string, id: string): Flashcard | null {
   const match = line.match(FLASHCARD_PATTERN);
@@ -36,6 +43,10 @@ function parseMcqLine(line: string, id: string): MultipleChoice | null {
   const answerIndex = options.findIndex(
     (option) => option.toLowerCase() === answer.toLowerCase(),
   );
+  // If the answer doesn't match one of the options exactly, this line is
+  // malformed - reject it rather than showing a question no option can
+  // ever be marked correct for.
+  if (answerIndex === -1) return null;
 
   return {
     kind: "mcq",

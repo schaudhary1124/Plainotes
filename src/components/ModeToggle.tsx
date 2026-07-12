@@ -1,3 +1,4 @@
+import { GraduationCap, Pencil } from "lucide-react";
 import type { AppMode } from "../types";
 
 interface ModeToggleProps {
@@ -5,36 +6,40 @@ interface ModeToggleProps {
   onChange: (mode: AppMode) => void;
 }
 
+const MODES: { value: AppMode; label: string; icon: typeof Pencil }[] = [
+  { value: "edit", label: "Edit", icon: Pencil },
+  { value: "study", label: "Study", icon: GraduationCap },
+];
+
 export function ModeToggle({ mode, onChange }: ModeToggleProps) {
-  const isStudy = mode === "study";
+  const activeIndex = MODES.findIndex((m) => m.value === mode);
 
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isStudy}
+    <div
+      role="tablist"
       aria-label="Toggle between Edit and Study mode"
-      onClick={() => onChange(isStudy ? "edit" : "study")}
-      className="glass-surface relative flex h-8 w-[132px] shrink-0 items-center rounded-full p-1 text-xs font-medium"
+      className="glass-surface relative flex h-8 w-36 shrink-0 items-center overflow-hidden rounded-full border-0 p-1 text-xs font-medium @max-sm:w-16"
     >
       <span
-        className="absolute top-1 h-6 w-[62px] rounded-full bg-indigo-500/80 shadow-sm shadow-indigo-950/40 transition-transform duration-200 ease-out"
-        style={{ transform: isStudy ? "translateX(62px)" : "translateX(0px)" }}
+        className="bg-accent-solid shadow-app absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full transition-transform duration-200 ease-out"
+        style={{ transform: activeIndex === 1 ? "translateX(100%)" : "translateX(0)" }}
       />
-      <span
-        className={`z-10 flex-1 text-center transition-colors duration-150 ${
-          isStudy ? "text-slate-400" : "text-white"
-        }`}
-      >
-        Edit
-      </span>
-      <span
-        className={`z-10 flex-1 text-center transition-colors duration-150 ${
-          isStudy ? "text-white" : "text-slate-400"
-        }`}
-      >
-        Study
-      </span>
-    </button>
+      {MODES.map((m) => (
+        <button
+          key={m.value}
+          type="button"
+          role="tab"
+          aria-selected={mode === m.value}
+          onClick={() => onChange(m.value)}
+          title={m.label}
+          className={`z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-1 text-center whitespace-nowrap transition-colors duration-150 ${
+            mode === m.value ? "text-white" : "text-secondary"
+          }`}
+        >
+          <m.icon size={12} className="shrink-0" />
+          <span className="@max-sm:hidden">{m.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }

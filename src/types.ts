@@ -1,9 +1,31 @@
 export interface NoteSummary {
-  /** File name including the .md extension, unique within the notes directory */
-  name: string;
+  /** Path relative to the notes root, including the .md extension, e.g. "Work/Todo.md" */
+  path: string;
   /** Display title, derived from the file name without its extension */
   title: string;
+  /** Path of the containing folder relative to the notes root, "" for the root */
+  parentPath: string;
 }
+
+export interface FolderEntry {
+  type: "folder";
+  /** Path relative to the notes root, e.g. "Work" or "Work/Archive" */
+  path: string;
+  title: string;
+  parentPath: string;
+  children: TreeEntry[];
+  /** Name of a preset color from FOLDER_COLORS, or undefined for the default color */
+  color?: string;
+}
+
+export interface NoteEntry {
+  type: "note";
+  path: string;
+  title: string;
+  parentPath: string;
+}
+
+export type TreeEntry = FolderEntry | NoteEntry;
 
 export type AppMode = "edit" | "study";
 
@@ -20,8 +42,45 @@ export interface MultipleChoice {
   question: string;
   options: string[];
   answer: string;
-  /** Index of `answer` within `options`, or -1 if it couldn't be matched */
+  /** Index of `answer` within `options` */
   answerIndex: number;
 }
 
 export type StudyItem = Flashcard | MultipleChoice;
+
+export type ThemeName = "light" | "midnight";
+export type BackgroundStyle = "flat" | "soft" | "glass";
+
+export type NotesViewMode = "grid" | "list";
+
+export interface AppSettings {
+  theme: ThemeName;
+  accent: string;
+  background: BackgroundStyle;
+  notesViewMode: NotesViewMode;
+  toolbarCollapsed: boolean;
+}
+
+export type SketchTool = "pen" | "highlighter" | "eraser";
+
+/** A single ink point, in CSS pixels relative to the note content's top-left
+ * corner (see SketchLayer) - not a coordinate space that scales with the
+ * note's width. */
+export interface SketchPoint {
+  x: number;
+  y: number;
+}
+
+export interface SketchStroke {
+  id: string;
+  tool: "pen" | "highlighter";
+  color: string;
+  /** Line width in CSS pixels. */
+  width: number;
+  points: SketchPoint[];
+}
+
+export interface SketchData {
+  version: 1;
+  strokes: SketchStroke[];
+}
