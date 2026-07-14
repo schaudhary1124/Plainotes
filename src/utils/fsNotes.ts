@@ -7,6 +7,7 @@ import {
   readTextFile,
   remove,
   rename,
+  stat,
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
@@ -27,6 +28,9 @@ const SKETCH_EXTENSION = ".sketch.json";
 // No leading dot: Tauri's fs scope glob matching (`PlaiNotes/**`) doesn't match dotfiles,
 // which would silently block reads/writes of this file.
 const META_FILE = "plainotes-meta.json";
+// No leading dot, same reasoning as META_FILE above. This is a cache the search
+// index rebuilds from if missing or unreadable, so it's fine to skip it silently.
+const SEARCH_INDEX_FILE = "plainotes-search-index.json";
 const BASE_DIR = BaseDirectory.Document;
 
 export const STARTER_CONTENT = "";
@@ -48,6 +52,25 @@ async function readMeta(): Promise<NotesMeta> {
 
 function writeMeta(meta: NotesMeta): Promise<void> {
   return writeTextFile(fullPath(META_FILE), JSON.stringify(meta, null, 2), { baseDir: BASE_DIR });
+}
+
+/** Reads the persisted search index cache, or null if it doesn't exist yet / is unreadable. */
+export async function readSearchIndexFile(): Promise<string | null> {
+  try {
+    return await readTextFile(fullPath(SEARCH_INDEX_FILE), { baseDir: BASE_DIR });
+  } catch {
+    return null;
+  }
+}
+
+export function writeSearchIndexFile(json: string): Promise<void> {
+  return writeTextFile(fullPath(SEARCH_INDEX_FILE), json, { baseDir: BASE_DIR });
+}
+
+/** Last-modified time of a note, in epoch ms - used to detect notes changed outside the app. */
+export async function noteMtimeMs(notePath: string): Promise<number> {
+  const info = await stat(fullPath(notePath), { baseDir: BASE_DIR });
+  return info.mtime?.getTime() ?? 0;
 }
 
 /** Repoints any folderColors entries under `oldPath` to `newPath`, for renames/moves. */
@@ -81,6 +104,11 @@ export async function setFolderColor(path: string, color: string | null): Promis
 
 function titleFromFileName(name: string): string {
   return name.endsWith(NOTE_EXTENSION) ? name.slice(0, -NOTE_EXTENSION.length) : name;
+}
+
+/** Derives a note's display title straight from its path, e.g. "Work/Todo.md" -> "Todo". */
+export function titleFromNotePath(notePath: string): string {
+  return titleFromFileName(nameOf(notePath));
 }
 
 function fullPath(relPath: string): string {

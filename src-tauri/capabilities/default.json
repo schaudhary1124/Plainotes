@@ -28,6 +28,10 @@
       "allow": [{ "path": "$DOCUMENT/PlaiNotes" }, { "path": "$DOCUMENT/PlaiNotes/**" }]
     },
     {
+      "identifier": "fs:allow-stat",
+      "allow": [{ "path": "$DOCUMENT/PlaiNotes" }, { "path": "$DOCUMENT/PlaiNotes/**" }]
+    },
+    {
       "identifier": "fs:allow-read-text-file",
       "allow": [{ "path": "$DOCUMENT/PlaiNotes/**" }]
     },

@@ -14,6 +14,7 @@ import {
   Search,
 } from "lucide-react";
 import { flattenNotes } from "../utils/fsNotes";
+import { searchNotes, type SearchSnippet } from "../utils/searchIndex";
 import type { FolderEntry, NotesViewMode, TreeEntry } from "../types";
 
 /** Preset folder colors, offered as swatches in the folder's context menu. */
@@ -42,6 +43,7 @@ interface NotesBrowserProps {
   onViewModeChange: (mode: NotesViewMode) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  searchIndexReady: boolean;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   onOpenNote: (path: string) => void;
   onDuplicateNote: (path: string) => void;
@@ -58,6 +60,8 @@ interface BrowserNote {
   path: string;
   title: string;
   parentPath: string;
+  /** Excerpt proving a body-content match; present only for search results. */
+  snippet?: SearchSnippet | null;
 }
 
 interface MenuState {
@@ -129,6 +133,7 @@ export function NotesBrowser({
   onViewModeChange,
   searchQuery,
   onSearchChange,
+  searchIndexReady,
   searchInputRef,
   onOpenNote,
   onDuplicateNote,
@@ -168,6 +173,15 @@ export function NotesBrowser({
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const isSearching = trimmedQuery.length > 0;
 
+  // Debounces only the (slightly heavier) ranked query itself, not the input's
+  // displayed value or the isSearching flag - so typing stays instant and the
+  // browse-vs-results view swaps immediately, while re-ranking lags a beat.
+  const [debouncedQuery, setDebouncedQuery] = useState(trimmedQuery);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(trimmedQuery), 120);
+    return () => clearTimeout(timer);
+  }, [trimmedQuery]);
+
   const folderChildren = useMemo(() => findChildren(tree, browseFolder) ?? [], [tree, browseFolder]);
 
   const displayFolders = useMemo(
@@ -175,13 +189,25 @@ export function NotesBrowser({
     [isSearching, folderChildren],
   );
 
-  const displayNotes: BrowserNote[] = useMemo(
-    () =>
-      isSearching
-        ? flattenNotes(tree).filter((n) => n.title.toLowerCase().includes(trimmedQuery))
-        : folderChildren.filter((e) => e.type === "note"),
-    [isSearching, tree, trimmedQuery, folderChildren],
-  );
+  const displayNotes: BrowserNote[] = useMemo(() => {
+    if (!isSearching) return folderChildren.filter((e) => e.type === "note");
+
+    const allNotes = flattenNotes(tree);
+    if (!searchIndexReady) {
+      // Index hasn't finished its first build yet (e.g. just launched on a
+      // large vault) - fall back to instant title matching rather than
+      // showing stale or empty results.
+      return allNotes.filter((n) => n.title.toLowerCase().includes(trimmedQuery));
+    }
+
+    const byPath = new Map(allNotes.map((n) => [n.path, n]));
+    return searchNotes(debouncedQuery)
+      .map((hit): BrowserNote | undefined => {
+        const note = byPath.get(hit.path);
+        return note ? { ...note, snippet: hit.snippet } : undefined;
+      })
+      .filter((n): n is BrowserNote => n !== undefined);
+  }, [isSearching, tree, trimmedQuery, debouncedQuery, folderChildren, searchIndexReady]);
 
   const breadcrumbs = getBreadcrumbs(browseFolder);
 
@@ -906,12 +932,12 @@ function NoteTile({
         onClick={onOpen}
         role="button"
         tabIndex={0}
-        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 ${
-          isBeingDragged ? "opacity-40" : "text-secondary hover:bg-surface-hover hover:text-primary"
-        }`}
+        className={`group flex cursor-pointer gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 ${
+          entry.snippet ? "items-start" : "items-center"
+        } ${isBeingDragged ? "opacity-40" : "text-secondary hover:bg-surface-hover hover:text-primary"}`}
         style={{ touchAction: "none" }}
       >
-        <FileText size={14} className="text-icon-outline shrink-0" />
+        <FileText size={14} className="text-icon-outline mt-0.5 shrink-0" />
         {isRenaming ? (
           <RenameInput
             initialValue={entry.title}
@@ -919,15 +945,24 @@ function NoteTile({
             onCancel={onCancelRename}
           />
         ) : (
-          <span
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartRename();
-            }}
-            className="min-w-0 flex-1 truncate"
-          >
-            {entry.title}
-          </span>
+          <div className="min-w-0 flex-1">
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                onStartRename();
+              }}
+              className="block truncate"
+            >
+              {entry.title}
+            </span>
+            {entry.snippet && (
+              <p className="text-tertiary truncate text-xs">
+                {entry.snippet.before}
+                <span className="text-secondary font-semibold">{entry.snippet.match}</span>
+                {entry.snippet.after}
+              </p>
+            )}
+          </div>
         )}
         {!isRenaming && (
           <button
@@ -985,6 +1020,13 @@ function NoteTile({
             className="text-primary truncate text-sm font-medium"
           >
             {entry.title}
+          </p>
+        )}
+        {entry.snippet && (
+          <p className="text-tertiary line-clamp-2 text-xs leading-snug">
+            {entry.snippet.before}
+            <span className="text-secondary font-semibold">{entry.snippet.match}</span>
+            {entry.snippet.after}
           </p>
         )}
       </div>

@@ -26,6 +26,14 @@ import {
 import { applySettingsToDocument, loadSettings, saveSettings } from "./utils/settings";
 import { getTargetFromLocation, openWindowInstance } from "./utils/windowInstance";
 import { broadcastNoteSaved, listenForNoteSaved } from "./utils/noteSync";
+import {
+  addNoteToIndex,
+  loadPersistedSearchIndex,
+  movePathInIndex,
+  removePathFromIndex,
+  syncSearchIndex,
+  updateNoteInIndex,
+} from "./utils/searchIndex";
 import type { AppMode, AppSettings, TreeEntry } from "./types";
 
 type BootStatus = "loading" | "ready" | "error";
@@ -50,6 +58,7 @@ function App() {
   const [browseFolder, setBrowseFolder] = useState("");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndexReady, setSearchIndexReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [newItemDialog, setNewItemDialog] = useState<NewItemDialogState | null>(null);
@@ -93,6 +102,7 @@ function App() {
     try {
       await writeNote(path, content);
       savedContentRef.current = content;
+      updateNoteInIndex(path, content);
       await broadcastNoteSaved(path, content);
     } catch {
       // The active note may have been deleted or moved outside the app;
@@ -167,7 +177,7 @@ function App() {
     (async () => {
       try {
         await ensureNotesDir();
-        await refreshTree();
+        const initialTree = await refreshTree();
         const target = getTargetFromLocation();
         if (target.notePath) {
           try {
@@ -182,6 +192,15 @@ function App() {
           setBrowseFolder(target.browseFolder);
         }
         setBootStatus("ready");
+
+        // Runs after first paint so a cold, unindexed vault never delays
+        // startup - search falls back to a plain title filter until this
+        // resolves (see NotesBrowser), then switches over to the full index.
+        void (async () => {
+          await loadPersistedSearchIndex();
+          await syncSearchIndex(initialTree);
+          setSearchIndexReady(true);
+        })();
       } catch (err) {
         setBootError(err instanceof Error ? err.message : String(err));
         setBootStatus("error");
@@ -199,6 +218,7 @@ function App() {
     let unlisten: (() => void) | undefined;
     (async () => {
       unlisten = await listenForNoteSaved((path, content) => {
+        updateNoteInIndex(path, content);
         if (path !== activeNotePathRef.current) return;
         if (activeContentRef.current !== savedContentRef.current) return;
         savedContentRef.current = content;
@@ -236,6 +256,7 @@ function App() {
       await flushActiveNote();
       const note = await createNote(parentPath, title);
       await refreshTree();
+      addNoteToIndex(note.path, STARTER_CONTENT);
       savedContentRef.current = STARTER_CONTENT;
       setActiveNotePath(note.path);
       setActiveContent(STARTER_CONTENT);
@@ -266,6 +287,7 @@ function App() {
       try {
         const newPath = await renameEntry(path, newTitle, isFolder);
         await refreshTree();
+        movePathInIndex(path, newPath);
         const current = activeNotePathRef.current;
         if (current) {
           if (!isFolder && current === path) {
@@ -298,6 +320,7 @@ function App() {
       try {
         const newPath = await moveEntry(path, targetParentPath);
         await refreshTree();
+        movePathInIndex(path, newPath);
         const current = activeNotePathRef.current;
         if (current) {
           if (current === path) {
@@ -320,6 +343,7 @@ function App() {
       } else {
         await deleteFolder(action.path);
       }
+      removePathFromIndex(action.path);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Delete failed");
     }
@@ -415,6 +439,7 @@ function App() {
                   onViewModeChange={(notesViewMode) => setSettings((s) => ({ ...s, notesViewMode }))}
                   searchQuery={searchQuery}
                   onSearchChange={setSearchQuery}
+                  searchIndexReady={searchIndexReady}
                   searchInputRef={searchInputRef}
                   onOpenNote={handleOpenNote}
                   onDuplicateNote={handleDuplicateNote}
@@ -437,6 +462,7 @@ function App() {
                   onSave={async (content) => {
                     await writeNote(activeNote.path, content);
                     savedContentRef.current = content;
+                    updateNoteInIndex(activeNote.path, content);
                     await broadcastNoteSaved(activeNote.path, content);
                   }}
                   toolbarVisible={toolbarVisible}
