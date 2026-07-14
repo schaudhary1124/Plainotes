@@ -1,4 +1,4 @@
-import { commonmark, emphasisSchema, headingSchema, strongSchema } from "@milkdown/kit/preset/commonmark";
+import { commonmark, emphasisSchema, hardbreakFilterNodes, headingSchema, strongSchema } from "@milkdown/kit/preset/commonmark";
 import { columnResizingPlugin, gfm } from "@milkdown/kit/preset/gfm";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
@@ -12,6 +12,8 @@ import type { Ctx } from "@milkdown/kit/ctx";
 import type { MarkType } from "@milkdown/kit/prose/model";
 import type { EditorState } from "@milkdown/kit/prose/state";
 import { isInTable } from "@milkdown/kit/prose/tables";
+import { getBlockAlign, getTableCellAlign } from "./alignmentCommands";
+import { alignmentSidecarRemark, configureAlignmentSchemas, type BlockAlign } from "./alignmentSchemaExtensions";
 import { codeBlockExtensions, codeBlockLanguages } from "./codeBlock";
 import { codeBlockGrips } from "./codeBlockGrips";
 import { flashcardPlugins } from "./flashcardNode";
@@ -19,6 +21,7 @@ import { imageView } from "./imageView";
 import { getListState, type ListState } from "./listCommands";
 import { taskListToggle } from "./taskListToggle";
 import { tabTrap } from "./tabTrap";
+import { tableLineBreak } from "./tableLineBreak";
 import { tableSchemaExtensionPlugins, tableSidecarRemark } from "./tableSchemaExtensions";
 import { tableGrips } from "./tableGrips";
 import { highlightSchema, strikethroughSchema, textDecorationPlugins, underlineSchema } from "./textDecorationMarks";
@@ -34,6 +37,8 @@ export interface EditorSelectionState {
   blockStyle: BlockStyle;
   list: ListState;
   inTable: boolean;
+  align: BlockAlign;
+  cellAlign: BlockAlign;
 }
 
 function isMarkActive(state: EditorState, type: MarkType): boolean {
@@ -61,6 +66,8 @@ export function getSelectionState(ctx: Ctx): EditorSelectionState {
     blockStyle: getBlockStyle(ctx, state),
     list: getListState(ctx),
     inTable: isInTable(state),
+    align: getBlockAlign(ctx),
+    cellAlign: getTableCellAlign(ctx),
   };
 }
 
@@ -94,7 +101,25 @@ export function registerMilkdownPlugins(
         languages: codeBlockLanguages,
         extensions: codeBlockExtensions,
       }));
+      // Milkdown's hardbreakFilterPlugin silently drops any hardbreak
+      // (Shift-Enter, and now plain Enter via tableLineBreak.ts) inserted
+      // inside a node listed here - "table" is in its default block-list, so
+      // without this override a line break inside a table cell would keep
+      // silently failing even after tableLineBreak.ts reroutes Enter to it.
+      // "code_block" stays filtered: it renders via its own CodeMirror node
+      // view (see codeBlock.ts), which doesn't use inline hardbreak nodes.
+      ctx.update(hardbreakFilterNodes.key, (prev) => prev.filter((name) => name !== "table"));
+      // Patches paragraph/heading's existing schema in place rather than
+      // `.use()`-ing an `.extendSchema()`'d replacement (contrast with
+      // tableSchemaExtensionPlugins below) - see configureAlignmentSchemas's
+      // own comment for why that distinction matters here.
+      configureAlignmentSchemas(ctx);
     })
+    // Registered before commonmark/gfm so its handleKeyDown - which
+    // intercepts plain Enter inside a table cell - runs before gfm's own
+    // tableKeymap ("ExitTable" is also bound to plain Enter and would
+    // otherwise win first, see tableLineBreak.ts).
+    .use(tableLineBreak)
     // flashcardPlugins registers first: Milkdown's markdown parser tries each
     // registered node's `parseMarkdown.match` in registration order and stops
     // at the first hit, and commonmark's `paragraph` schema matches *every*
@@ -118,6 +143,12 @@ export function registerMilkdownPlugins(
     // raw pipe tables into mdast `table` nodes before it can attach the
     // sidecar comment's data onto them.
     .use(tableSidecarRemark)
+    // Same ordering requirement as tableSidecarRemark: needs commonmark's
+    // remarkHtmlTransformer to have already run so raw sidecar HTML nodes are
+    // in their final flat shape. (The paragraph/heading schema patch itself
+    // is applied eagerly in .config() above, not here - see
+    // configureAlignmentSchemas.)
+    .use(alignmentSidecarRemark)
     // Same ordering requirement as tableSidecarRemark: needs commonmark's
     // remarkHtmlTransformer and gfm's own remark plugins to have already run
     // so raw `<mark>`/`<u>` HTML nodes are in their final flat shape.

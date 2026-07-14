@@ -16,6 +16,9 @@ import {
   RemoveFormatting,
   Strikethrough,
   Table2,
+  TextAlignCenter,
+  TextAlignEnd,
+  TextAlignStart,
   Trash2,
   Type,
   Underline,
@@ -38,6 +41,8 @@ import { useDebouncedCallback } from "../hooks/useDebouncedCallback";
 import { readSketch, writeAttachment, writeSketch } from "../utils/fsNotes";
 import type { BlockStyle, EditorSelectionState } from "../milkdown/setup";
 import { getSelectionState, registerMilkdownPlugins } from "../milkdown/setup";
+import { setBlockAlign, setTableColumnAlign } from "../milkdown/alignmentCommands";
+import type { BlockAlign } from "../milkdown/alignmentSchemaExtensions";
 import { liftOutOfList, toggleBulletList, toggleOrderedList, toggleTaskItem } from "../milkdown/listCommands";
 import {
   addTableColumn,
@@ -89,6 +94,12 @@ const CELL_COLORS: { label: string; value: string }[] = [
   { label: "Blue", value: "rgba(96, 165, 250, 0.3)" },
   { label: "Purple", value: "rgba(192, 132, 252, 0.3)" },
   { label: "Gray", value: "rgba(148, 163, 184, 0.3)" },
+];
+
+const ALIGN_OPTIONS: { align: BlockAlign; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { align: "left", label: "Align left", icon: TextAlignStart },
+  { align: "center", label: "Align center", icon: TextAlignCenter },
+  { align: "right", label: "Align right", icon: TextAlignEnd },
 ];
 
 const TEXT_STYLES: { style: BlockStyle; label: string; className: string }[] = [
@@ -292,6 +303,7 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
 
 function TableMenu({
   inTable,
+  cellAlign,
   onInsert,
   onAddRow,
   onAddColumn,
@@ -299,8 +311,10 @@ function TableMenu({
   onDeleteColumn,
   onDeleteTable,
   onSetCellColor,
+  onSetCellAlign,
 }: {
   inTable: boolean;
+  cellAlign: BlockAlign;
   onInsert: (row: number, col: number) => void;
   onAddRow: () => void;
   onAddColumn: () => void;
@@ -308,6 +322,7 @@ function TableMenu({
   onDeleteColumn: () => void;
   onDeleteTable: () => void;
   onSetCellColor: (color: string | null) => void;
+  onSetCellAlign: (align: BlockAlign) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState({ row: 3, col: 3 });
@@ -411,6 +426,23 @@ function TableMenu({
             Delete column
           </button>
           <div className="border-subtle my-1 border-t" />
+          <div className="text-tertiary px-3 pb-1 pt-0.5 text-xs">Column align</div>
+          <div className="flex items-center gap-1 px-3 pb-1.5">
+            {ALIGN_OPTIONS.map(({ align, label, icon: Icon }) => (
+              <button
+                key={align}
+                type="button"
+                title={label}
+                aria-label={label}
+                aria-pressed={cellAlign === align}
+                className={`btn-ghost h-6 w-6 shrink-0 ${cellAlign === align ? "bg-accent-soft text-accent" : ""}`}
+                onClick={() => onSetCellAlign(align)}
+              >
+                <Icon size={13} />
+              </button>
+            ))}
+          </div>
+          <div className="border-subtle my-1 border-t" />
           <div className="text-tertiary px-3 pb-1 pt-0.5 text-xs">Fill color</div>
           <div className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5">
             {CELL_COLORS.map((color) => (
@@ -477,6 +509,8 @@ function NoteEditor({
     blockStyle: "paragraph",
     list: null,
     inTable: false,
+    align: "left",
+    cellAlign: "left",
   });
   const latestContentRef = useRef(initialContent);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -789,6 +823,13 @@ function NoteEditor({
     },
   ];
 
+  const alignGroup: ToolbarAction[] = ALIGN_OPTIONS.map(({ align, label, icon }) => ({
+    icon,
+    label,
+    action: () => runAndSync((ctx) => setBlockAlign(ctx, align)),
+    isActive: selectionState.align === align,
+  }));
+
   const trailingButtons: ToolbarAction[] = [
     {
       icon: DividerIcon,
@@ -849,6 +890,7 @@ function NoteEditor({
           <ToolbarButtonGroup items={emphasisGroup} />
           <ToolbarButtonGroup items={decorationGroup} />
           <ToolbarButtonGroup items={listGroup} />
+          <ToolbarButtonGroup items={alignGroup} />
           <button
             type="button"
             onClick={clearFormattingButton.action}
@@ -860,6 +902,7 @@ function NoteEditor({
           </button>
           <TableMenu
             inTable={selectionState.inTable}
+            cellAlign={selectionState.cellAlign}
             onInsert={(row, col) => runAndSync((ctx) => insertTable(ctx, row, col))}
             onAddRow={() => runAndSync(addTableRow)}
             onAddColumn={() => runAndSync(addTableColumn)}
@@ -867,6 +910,7 @@ function NoteEditor({
             onDeleteColumn={() => runAndSync(deleteTableColumn)}
             onDeleteTable={() => runAndSync(deleteCurrentTable)}
             onSetCellColor={(color) => runAndSync((ctx) => setTableCellBackground(ctx, color))}
+            onSetCellAlign={(align) => runAndSync((ctx) => setTableColumnAlign(ctx, align))}
           />
           {trailingButtons.map(({ icon: Icon, label, action, isActive }) => (
             <button
