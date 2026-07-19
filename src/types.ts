@@ -5,6 +5,10 @@ export interface NoteSummary {
   title: string;
   /** Path of the containing folder relative to the notes root, "" for the root */
   parentPath: string;
+  /** Epoch ms when the note was created, if known */
+  createdAt?: number;
+  /** Epoch ms when the note was last modified, if known */
+  modifiedAt?: number;
 }
 
 export interface FolderEntry {
@@ -16,6 +20,10 @@ export interface FolderEntry {
   children: TreeEntry[];
   /** Name of a preset color from FOLDER_COLORS, or undefined for the default color */
   color?: string;
+  /** Epoch ms when the folder was created, if known */
+  createdAt?: number;
+  /** Epoch ms when the folder was last modified (a direct child added/removed/renamed), if known */
+  modifiedAt?: number;
 }
 
 export interface NoteEntry {
@@ -23,6 +31,10 @@ export interface NoteEntry {
   path: string;
   title: string;
   parentPath: string;
+  /** Epoch ms when the note was created, if known */
+  createdAt?: number;
+  /** Epoch ms when the note was last modified, if known */
+  modifiedAt?: number;
 }
 
 export type TreeEntry = FolderEntry | NoteEntry;

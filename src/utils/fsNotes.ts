@@ -38,15 +38,19 @@ export const STARTER_CONTENT = "";
 interface NotesMeta {
   /** Maps a folder's relative path to a preset color name from FOLDER_COLORS */
   folderColors: Record<string, string>;
+  /** Maps a note's or folder's relative path to when it was created, in epoch ms.
+   * Tracked explicitly rather than read off filesystem birthtime, which Tauri
+   * notes "may not be available on all platforms" (notably Linux). */
+  createdAt: Record<string, number>;
 }
 
 async function readMeta(): Promise<NotesMeta> {
   try {
     const raw = await readTextFile(fullPath(META_FILE), { baseDir: BASE_DIR });
     const parsed = JSON.parse(raw);
-    return { folderColors: parsed.folderColors ?? {} };
+    return { folderColors: parsed.folderColors ?? {}, createdAt: parsed.createdAt ?? {} };
   } catch {
-    return { folderColors: {} };
+    return { folderColors: {}, createdAt: {} };
   }
 }
 
@@ -73,25 +77,41 @@ export async function noteMtimeMs(notePath: string): Promise<number> {
   return info.mtime?.getTime() ?? 0;
 }
 
-/** Repoints any folderColors entries under `oldPath` to `newPath`, for renames/moves. */
-function remapMetaPaths(meta: NotesMeta, oldPath: string, newPath: string): NotesMeta {
-  const folderColors: Record<string, string> = {};
-  for (const [key, value] of Object.entries(meta.folderColors)) {
-    if (key === oldPath) folderColors[newPath] = value;
-    else if (key.startsWith(`${oldPath}/`)) folderColors[newPath + key.slice(oldPath.length)] = value;
-    else folderColors[key] = value;
+/** Repoints any entries under `oldPath` (exact match or nested) to `newPath`. */
+function remapPathKeys<T>(map: Record<string, T>, oldPath: string, newPath: string): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(map)) {
+    if (key === oldPath) result[newPath] = value;
+    else if (key.startsWith(`${oldPath}/`)) result[newPath + key.slice(oldPath.length)] = value;
+    else result[key] = value;
   }
-  return { folderColors };
+  return result;
 }
 
-/** Drops any folderColors entries at or under `path`, for deletions. */
-function dropMetaPaths(meta: NotesMeta, path: string): NotesMeta {
-  const folderColors: Record<string, string> = {};
-  for (const [key, value] of Object.entries(meta.folderColors)) {
+/** Drops any entries at or under `path`. */
+function dropPathKeys<T>(map: Record<string, T>, path: string): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(map)) {
     if (key === path || key.startsWith(`${path}/`)) continue;
-    folderColors[key] = value;
+    result[key] = value;
   }
-  return { folderColors };
+  return result;
+}
+
+/** Repoints any meta entries under `oldPath` to `newPath`, for renames/moves. */
+function remapMetaPaths(meta: NotesMeta, oldPath: string, newPath: string): NotesMeta {
+  return {
+    folderColors: remapPathKeys(meta.folderColors, oldPath, newPath),
+    createdAt: remapPathKeys(meta.createdAt, oldPath, newPath),
+  };
+}
+
+/** Drops any meta entries at or under `path`, for deletions. */
+function dropMetaPaths(meta: NotesMeta, path: string): NotesMeta {
+  return {
+    folderColors: dropPathKeys(meta.folderColors, path),
+    createdAt: dropPathKeys(meta.createdAt, path),
+  };
 }
 
 /** Sets (or clears, when `color` is null) the preset color for the folder at `path`. */
@@ -142,7 +162,7 @@ export async function ensureNotesDir(): Promise<void> {
   }
 }
 
-async function buildTree(relDir: string, folderColors: Record<string, string>): Promise<TreeEntry[]> {
+async function buildTree(relDir: string, meta: NotesMeta): Promise<TreeEntry[]> {
   const entries = await readDir(fullPath(relDir), { baseDir: BASE_DIR });
   const relevant = entries.filter((entry) => {
     if (!entry.name || entry.name.startsWith(".")) return false;
@@ -156,15 +176,22 @@ async function buildTree(relDir: string, folderColors: Record<string, string>): 
   const result = await Promise.all(
     relevant.map(async (entry): Promise<TreeEntry> => {
       const relPath = joinPath(relDir, entry.name);
+      // birthtime isn't reliable on every platform, so it's only a fallback
+      // for entries that predate createdAt tracking in the meta file.
+      const info = await stat(fullPath(relPath), { baseDir: BASE_DIR }).catch(() => null);
+      const modifiedAt = info?.mtime?.getTime();
+      const createdAt = meta.createdAt[relPath] ?? info?.birthtime?.getTime() ?? modifiedAt;
       if (entry.isDirectory) {
-        const children = await buildTree(relPath, folderColors);
+        const children = await buildTree(relPath, meta);
         const folder: FolderEntry = {
           type: "folder",
           path: relPath,
           title: entry.name,
           parentPath: relDir,
           children,
-          color: folderColors[relPath],
+          color: meta.folderColors[relPath],
+          createdAt,
+          modifiedAt,
         };
         return folder;
       }
@@ -173,6 +200,8 @@ async function buildTree(relDir: string, folderColors: Record<string, string>): 
         path: relPath,
         title: titleFromFileName(entry.name),
         parentPath: relDir,
+        createdAt,
+        modifiedAt,
       };
       return note;
     }),
@@ -189,19 +218,35 @@ async function buildTree(relDir: string, folderColors: Record<string, string>): 
 /** Recursively reads the notes folder into a tree of folders and notes. */
 export async function listNoteTree(): Promise<TreeEntry[]> {
   const meta = await readMeta();
-  return buildTree("", meta.folderColors);
+  return buildTree("", meta);
 }
 
 export function flattenNotes(tree: TreeEntry[]): NoteSummary[] {
   const notes: NoteSummary[] = [];
   for (const entry of tree) {
     if (entry.type === "note") {
-      notes.push({ path: entry.path, title: entry.title, parentPath: entry.parentPath });
+      notes.push({
+        path: entry.path,
+        title: entry.title,
+        parentPath: entry.parentPath,
+        createdAt: entry.createdAt,
+        modifiedAt: entry.modifiedAt,
+      });
     } else {
       notes.push(...flattenNotes(entry.children));
     }
   }
   return notes;
+}
+
+export function flattenFolders(tree: TreeEntry[]): FolderEntry[] {
+  const folders: FolderEntry[] = [];
+  for (const entry of tree) {
+    if (entry.type !== "folder") continue;
+    folders.push(entry);
+    folders.push(...flattenFolders(entry.children));
+  }
+  return folders;
 }
 
 export function readNote(path: string): Promise<string> {
@@ -215,6 +260,8 @@ export function writeNote(path: string, content: string): Promise<void> {
 export async function deleteNote(path: string): Promise<void> {
   await remove(fullPath(path), { baseDir: BASE_DIR });
   await deleteSketch(path);
+  const meta = await readMeta();
+  await writeMeta(dropMetaPaths(meta, path));
 }
 
 export async function deleteFolder(path: string): Promise<void> {
@@ -265,6 +312,11 @@ export async function createNote(parentPath: string, desiredTitle?: string): Pro
   const name = `${title}${NOTE_EXTENSION}`;
   const relPath = joinPath(parentPath, name);
   await writeNote(relPath, STARTER_CONTENT);
+
+  const meta = await readMeta();
+  meta.createdAt[relPath] = Date.now();
+  await writeMeta(meta);
+
   return { path: relPath, title, parentPath };
 }
 
@@ -278,7 +330,12 @@ export async function createFolder(
   const name = await uniqueName(parentPath, base, "");
   const relPath = joinPath(parentPath, name);
   await mkdir(fullPath(relPath), { baseDir: BASE_DIR, recursive: true });
-  if (color) await setFolderColor(relPath, color);
+
+  const meta = await readMeta();
+  meta.createdAt[relPath] = Date.now();
+  if (color) meta.folderColors[relPath] = color;
+  await writeMeta(meta);
+
   return relPath;
 }
 
@@ -309,12 +366,9 @@ export async function renameEntry(
     newPathBaseDir: BASE_DIR,
   });
 
-  if (isFolder) {
-    const meta = await readMeta();
-    await writeMeta(remapMetaPaths(meta, path, newPath));
-  } else {
-    await relocateSketch(path, newPath);
-  }
+  const meta = await readMeta();
+  await writeMeta(remapMetaPaths(meta, path, newPath));
+  if (!isFolder) await relocateSketch(path, newPath);
 
   return newPath;
 }
@@ -342,12 +396,9 @@ export async function moveEntry(path: string, targetParentPath: string): Promise
     newPathBaseDir: BASE_DIR,
   });
 
-  if (!path.endsWith(NOTE_EXTENSION)) {
-    const meta = await readMeta();
-    await writeMeta(remapMetaPaths(meta, path, newPath));
-  } else {
-    await relocateSketch(path, newPath);
-  }
+  const meta = await readMeta();
+  await writeMeta(remapMetaPaths(meta, path, newPath));
+  if (path.endsWith(NOTE_EXTENSION)) await relocateSketch(path, newPath);
 
   return newPath;
 }

@@ -31,6 +31,8 @@ interface HeaderProps {
   onToggleToolbar: () => void;
   showFolderBack: boolean;
   onNavigateUp: () => void;
+  /** The open-tabs strip, rendered left-aligned next to the back button. */
+  tabStrip?: React.ReactNode;
 }
 
 const appWindow = getCurrentWindow();
@@ -50,6 +52,7 @@ export function Header({
   onToggleToolbar,
   showFolderBack,
   onNavigateUp,
+  tabStrip,
 }: HeaderProps) {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
 
@@ -75,19 +78,41 @@ export function Header({
           >
             <ArrowLeft size={15} />
           </button>
-        ) : view === "note" ? (
+        ) : (
           <>
-            <button
-              type="button"
-              onClick={onBack}
-              className="btn-ghost h-6 w-6"
-              title="Back to notes"
-              aria-label="Back to notes"
-            >
-              <ArrowLeft size={15} />
-            </button>
-            <ModeToggle mode={mode} onChange={onModeChange} />
-            {mode === "edit" && (
+            {view === "note" ? (
+              <button
+                type="button"
+                onClick={onBack}
+                className="btn-ghost h-6 w-6 shrink-0"
+                title="Back to notes"
+                aria-label="Back to notes"
+              >
+                <ArrowLeft size={15} />
+              </button>
+            ) : (
+              showFolderBack && (
+                <button
+                  type="button"
+                  onClick={onNavigateUp}
+                  className="btn-ghost h-6 w-6 shrink-0"
+                  title="Back"
+                  aria-label="Back to parent folder"
+                >
+                  <ArrowLeft size={15} />
+                </button>
+              )
+            )}
+            {tabStrip}
+          </>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center">
+        {!settingsOpen && (
+          <>
+            {view === "note" && <ModeToggle mode={mode} onChange={onModeChange} />}
+            {view === "note" && mode === "edit" && (
               <button
                 type="button"
                 onClick={onToggleSketchMode}
@@ -99,25 +124,6 @@ export function Header({
                 <Brush size={15} />
               </button>
             )}
-          </>
-        ) : (
-          showFolderBack && (
-            <button
-              type="button"
-              onClick={onNavigateUp}
-              className="btn-ghost h-6 w-6"
-              title="Back"
-              aria-label="Back to parent folder"
-            >
-              <ArrowLeft size={15} />
-            </button>
-          )
-        )}
-      </div>
-
-      <div className="flex items-center">
-        {!settingsOpen && (
-          <>
             <button
               type="button"
               onClick={onOpenSettings}

@@ -13,7 +13,7 @@ import {
   MoreHorizontal,
   Search,
 } from "lucide-react";
-import { flattenNotes } from "../utils/fsNotes";
+import { flattenFolders, flattenNotes } from "../utils/fsNotes";
 import { searchNotes, type SearchSnippet } from "../utils/searchIndex";
 import type { FolderEntry, NotesViewMode, TreeEntry } from "../types";
 
@@ -184,10 +184,13 @@ export function NotesBrowser({
 
   const folderChildren = useMemo(() => findChildren(tree, browseFolder) ?? [], [tree, browseFolder]);
 
-  const displayFolders = useMemo(
-    () => (isSearching ? [] : (folderChildren.filter((e) => e.type === "folder") as FolderEntry[])),
-    [isSearching, folderChildren],
-  );
+  // While searching, folders are matched by name only (never pulled in just
+  // because a note inside them matches) - a note living in a matching folder
+  // still has to match on its own title/content to show up separately.
+  const displayFolders: FolderEntry[] = useMemo(() => {
+    if (!isSearching) return folderChildren.filter((e) => e.type === "folder") as FolderEntry[];
+    return flattenFolders(tree).filter((f) => f.title.toLowerCase().includes(trimmedQuery));
+  }, [isSearching, folderChildren, tree, trimmedQuery]);
 
   const displayNotes: BrowserNote[] = useMemo(() => {
     if (!isSearching) return folderChildren.filter((e) => e.type === "note");
@@ -333,6 +336,13 @@ export function NotesBrowser({
     setRenaming({ path });
   }
 
+  /** Opens a folder tile - if it was clicked from search results, also clears
+   * the query so the browse view actually lands on the folder's contents. */
+  function openFolder(path: string) {
+    if (isSearching) onSearchChange("");
+    onNavigate(path);
+  }
+
   function commitRename(path: string, isFolder: boolean, rawValue: string) {
     setRenaming(null);
     const value = rawValue.trim();
@@ -342,7 +352,7 @@ export function NotesBrowser({
   const nothingAnywhere = tree.length === 0;
   const folderEmpty =
     viewMode === "grid" && !isSearching && displayFolders.length === 0 && displayNotes.length === 0;
-  const noMatches = isSearching && displayNotes.length === 0;
+  const noMatches = isSearching && displayNotes.length === 0 && displayFolders.length === 0;
   const createTargetFolder = viewMode === "grid" ? browseFolder : "";
 
   return (
@@ -472,7 +482,7 @@ export function NotesBrowser({
                     parentPath: entry.parentPath,
                   })
                 }
-                onOpen={() => guardedClick(() => onNavigate(entry.path))}
+                onOpen={() => guardedClick(() => openFolder(entry.path))}
                 onStartRename={() => startRename(entry.path)}
                 onOpenMenu={(e) =>
                   openMenu(e, { path: entry.path, title: entry.title, type: "folder", color: entry.color })
@@ -506,6 +516,29 @@ export function NotesBrowser({
 
         {!nothingAnywhere && !noMatches && viewMode === "list" && isSearching && (
           <div className="flex flex-col gap-0.5">
+            {displayFolders.map((entry) => (
+              <FolderListRow
+                key={entry.path}
+                entry={entry}
+                isRenaming={renaming?.path === entry.path}
+                onCommitRename={(value) => commitRename(entry.path, true, value)}
+                onCancelRename={() => setRenaming(null)}
+                isBeingDragged={drag?.path === entry.path}
+                onPointerDown={(e) =>
+                  handleRowPointerDown(e, {
+                    path: entry.path,
+                    title: entry.title,
+                    type: "folder",
+                    parentPath: entry.parentPath,
+                  })
+                }
+                onOpen={() => guardedClick(() => openFolder(entry.path))}
+                onStartRename={() => startRename(entry.path)}
+                onOpenMenu={(e) =>
+                  openMenu(e, { path: entry.path, title: entry.title, type: "folder", color: entry.color })
+                }
+              />
+            ))}
             {displayNotes.map((entry) => (
               <NoteTile
                 key={entry.path}
@@ -681,6 +714,85 @@ function FolderTile({
         )}
         <p className="text-tertiary text-xs">{countLabel}</p>
       </div>
+    </div>
+  );
+}
+
+interface FolderListRowProps {
+  entry: FolderEntry;
+  isRenaming: boolean;
+  onCommitRename: (value: string) => void;
+  onCancelRename: () => void;
+  isBeingDragged: boolean;
+  onPointerDown: (e: React.PointerEvent) => void;
+  onOpen: () => void;
+  onStartRename: () => void;
+  onOpenMenu: (e: React.MouseEvent) => void;
+}
+
+/** List-view row for a folder shown among search results - unlike `TreeRow`
+ * it's a flat, non-expandable row that just navigates into the folder. */
+function FolderListRow({
+  entry,
+  isRenaming,
+  onCommitRename,
+  onCancelRename,
+  isBeingDragged,
+  onPointerDown,
+  onOpen,
+  onStartRename,
+  onOpenMenu,
+}: FolderListRowProps) {
+  const itemCount = entry.children.length;
+  const countLabel = `${itemCount} item${itemCount === 1 ? "" : "s"}`;
+  const colorHex = entry.color ? FOLDER_COLOR_HEX[entry.color] : undefined;
+
+  return (
+    <div
+      data-drop-target
+      data-path={entry.path}
+      onPointerDown={onPointerDown}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 ${
+        isBeingDragged ? "opacity-40" : "text-secondary hover:bg-surface-hover hover:text-primary"
+      }`}
+      style={{ touchAction: "none" }}
+    >
+      <Folder
+        size={14}
+        className={colorHex ? "text-icon-outline shrink-0" : "text-tertiary shrink-0"}
+        fill={colorHex}
+        fillOpacity={colorHex ? 1 : 0}
+      />
+      {isRenaming ? (
+        <RenameInput initialValue={entry.title} onCommit={onCommitRename} onCancel={onCancelRename} />
+      ) : (
+        <div className="min-w-0 flex-1">
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onStartRename();
+            }}
+            className="block truncate font-medium"
+          >
+            {entry.title}
+          </span>
+          <p className="text-tertiary truncate text-xs">{countLabel}</p>
+        </div>
+      )}
+      {!isRenaming && (
+        <button
+          type="button"
+          onClick={onOpenMenu}
+          className="btn-ghost h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100"
+          title="Folder options"
+          aria-label={`Options for ${entry.title}`}
+        >
+          <MoreHorizontal size={12} />
+        </button>
+      )}
     </div>
   );
 }
