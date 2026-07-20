@@ -36,6 +36,11 @@
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
   --selection: rgb(var(--accent-rgb) / 0.22);
   --icon-outline: #000000;
+  --look-rule: rgba(0, 0, 0, 0.14);
+  --look-grid: rgba(0, 0, 0, 0.06);
+  --look-margin: rgba(185, 28, 28, 0.25);
+  --look-tint: rgba(255, 250, 235, 0.55);
+  --table-border: rgba(0, 0, 0, 0.26);
 }
 
 /* ---------- Theme: Midnight (glassmorphism dark) ---------- */
@@ -66,6 +71,11 @@
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
   --selection: rgb(var(--accent-rgb) / 0.35);
   --icon-outline: #ffffff;
+  --look-rule: rgba(255, 255, 255, 0.16);
+  --look-grid: rgba(255, 255, 255, 0.07);
+  --look-margin: rgba(251, 113, 133, 0.28);
+  --look-tint: rgba(255, 255, 255, 0.03);
+  --table-border: rgba(255, 255, 255, 0.28);
 }
 
 /* ---------- Background style: controls blur/translucency intensity ---------- */
@@ -259,6 +269,134 @@ input,
   font-size: 15px;
   line-height: 1.5;
 }
+
+/* ---------- Note looks: per-note background texture, content unaffected ----------
+   A repeating background can't naturally track rich text: headings, wrapped list
+   items, and per-block margins all have different heights, so a fixed-period rule
+   pattern drifts out of sync and cuts through text instead of sitting under it.
+   "paper" and "index-card" fix this by putting every text line (including each
+   wrapped line, since `line-height` applies per line box, not per block) on a
+   shared baseline grid: every participating element's line-height and vertical
+   margins are forced to whole multiples of --rule, the same unit the ruled
+   background repeats at, so a rule line always falls directly under a baseline.
+   Code blocks/tables opt out (they carry their own opaque background already, so
+   misaligned lines are naturally hidden rather than fixed) and can locally break
+   the grid for content that follows - an accepted limitation. */
+.note-look-grid {
+  background-color: var(--look-tint);
+  background-image: radial-gradient(circle, var(--look-grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-attachment: local;
+}
+.prose-note.note-look-paper,
+.prose-note.note-look-index-card {
+  --rule: 27px;
+  background-color: var(--look-tint);
+}
+.prose-note.note-look-paper {
+  /* Sits inside the editor's own left padding (px-12/px-6/px-3 in Editor.tsx,
+     which shrink at the @max-lg/@max-sm container-query breakpoints), offset
+     a bit further left so the line never touches the text it's next to. */
+  --look-margin-x: 2.5rem;
+  background-image: linear-gradient(90deg, var(--look-margin) 0, var(--look-margin) 1.5px, transparent 1.5px);
+  background-position: var(--look-margin-x) 0;
+  background-repeat: no-repeat;
+  /* .prose-note is the overflow-y:auto scroll container itself, so its
+     background is pinned to its own (viewport-sized) box by default and
+     won't travel with the scrolled content - local ties it to the content
+     instead, same as a plain in-flow element. */
+  background-attachment: local;
+}
+@container (max-width: 32rem) {
+  .prose-note.note-look-paper {
+    --look-margin-x: 1rem;
+  }
+}
+@container (max-width: 24rem) {
+  .prose-note.note-look-paper {
+    --look-margin-x: 0.4rem;
+  }
+}
+/* The rule-line pattern is a ::before on the content wrapper div (Editor.tsx's
+   sketchWrapperRef, .prose-note's one and only direct child - already
+   `position: relative`), not on .prose-note itself: .prose-note is the
+   scrolling element, so an absolutely-positioned child of *it* is pinned to
+   its viewport-sized box and doesn't travel with the scrolled content the
+   way a normal in-flow descendant does - lines would stop updating below the
+   first screenful. The wrapper div is a normal in-flow child that already
+   grows to the full scrolled height, so anchoring here scrolls correctly for
+   free. It has no padding of its own (text starts right at its edges), which
+   also gives correct top/bottom clipping with no extra work - the pattern
+   only needs to be deliberately pushed left/right past the wrapper's own
+   edges (with negative inset, not padding) to reach .prose-note's real
+   padding edges instead of stopping at the text column. */
+.prose-note.note-look-paper > div::before,
+.prose-note.note-look-index-card > div::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3rem;
+  right: -3rem;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--look-rule) 0,
+    var(--look-rule) 1px,
+    transparent 1px,
+    transparent var(--rule)
+  );
+  background-position: 0 calc(var(--rule) - 1px);
+  background-repeat: repeat;
+  /* Without an explicit size, a `repeating-linear-gradient` background
+     defaults to filling the *entire* element as one image and repeats
+     internally rather than being tiled by background-repeat - and both
+     Chromium and WebKit render a rasterization seam near the top edge of
+     that large a gradient. Sizing it to exactly one rule unit and letting
+     background-repeat do the actual tiling avoids the seam. */
+  background-size: 100% var(--rule);
+}
+@container (max-width: 32rem) {
+  .prose-note.note-look-paper > div::before,
+  .prose-note.note-look-index-card > div::before {
+    left: -1.5rem;
+    right: -1.5rem;
+  }
+}
+@container (max-width: 24rem) {
+  .prose-note.note-look-paper > div::before,
+  .prose-note.note-look-index-card > div::before {
+    left: -0.75rem;
+    right: -0.75rem;
+  }
+}
+.prose-note.note-look-index-card {
+  --rule: 34px;
+}
+.note-look-index-card > * {
+  max-width: 38rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+.prose-note.note-look-paper :is(h1, h2, h3, p, li, blockquote),
+.prose-note.note-look-index-card :is(h1, h2, h3, p, li, blockquote) {
+  line-height: var(--rule);
+  margin: 0;
+}
+/* h1/h2/h3 all share a single 27px paper row (line-height: var(--rule),
+   margin: 0 from the shared rule above), so switching a line's style between
+   Normal/Subheading/Heading/Title never inserts extra blank space. */
+.prose-note.note-look-paper :is(ul, ol),
+.prose-note.note-look-index-card :is(ul, ol) {
+  margin: 0;
+}
+.prose-note.note-look-paper hr,
+.prose-note.note-look-index-card hr {
+  /* hr's own rendered height is its 2px border-top; split the rest of one
+     rule unit evenly above/below so it still contributes exactly --rule. */
+  margin: calc((var(--rule) - 2px) / 2) 0;
+}
+
 .prose-note h1 { font-size: 1.6em; font-weight: 700; margin: 0.4em 0 0.3em; }
 .prose-note h2 { font-size: 1.3em; font-weight: 700; margin: 0.9em 0 0.3em; }
 .prose-note h3 { font-size: 1.1em; font-weight: 600; margin: 0.8em 0 0.25em; }
@@ -524,17 +662,66 @@ input,
   font-size: 0.92em;
 }
 .prose-note th, .prose-note td {
-  /* --border-strong, not --border: a data grid needs clearly visible
+  /* --table-border, not --border-strong: a data grid needs clearly visible
      separators between cells, unlike the barely-there dividers that token is
      tuned for elsewhere in the UI (e.g. between toolbar buttons) - at
-     --border's opacity the body rows read as borderless against the page
-     background, leaving only the header row (which also has a fill color)
-     looking boxed. */
-  border: 1px solid var(--border-strong);
+     --border-strong's opacity the body rows read as almost borderless against
+     the page background, leaving only the header row (which also has a fill
+     color) looking boxed. */
+  border: 1px solid var(--table-border);
   padding: 0.45em 0.7em;
   text-align: left;
 }
 .prose-note th { background: var(--surface-hover); font-weight: 600; }
+/* Snap the table's own top/bottom spacing to the paper/index-card rule grid
+   so it starts and ends flush on a rule line instead of floating at an
+   arbitrary offset mid-line (see the "Note looks" comment above). Zero
+   margin is itself a whole multiple of --rule, so the table butts directly
+   against the text line before/after it - the same spacing a plain
+   paragraph-to-paragraph transition gets - rather than eating a full blank
+   rule line. The ruled line ::before is absolutely positioned, which (per
+   CSS painting order) always paints above ordinary in-flow content
+   regardless of DOM order - an opaque `background` on td/th alone doesn't
+   stop it showing through empty cells. Making the table itself a positioned
+   box (like `.milkdown-code-block` does for the same reason) moves its
+   paint step after the ::before's, and the solid `background-color` gives
+   it something opaque to paint the lines over. */
+.prose-note.note-look-paper table,
+.prose-note.note-look-index-card table {
+  margin: 0;
+  position: relative;
+  background-color: var(--app-bg);
+  /* Paints the table's own outer top/left edge - see the box-shadow note
+     on td/th below for why this is a shadow and not a `border`. */
+  box-shadow: inset 0 1px 0 0 var(--table-border), inset 1px 0 0 0 var(--table-border);
+}
+/* Each line in a cell is pinned to exactly one rule unit so table rows -
+   even ones whose cell wraps to several lines - read as whole grid cells.
+   td/th only carry the horizontal inset; the row-height budget comes
+   entirely from the cell's <p> via the shared paper/index-card paragraph
+   rule above (line-height: var(--rule)). It has to be line-height, not
+   padding: a milkdown table cell can only ever hold a single <p> (see
+   cellContent: 'paragraph', singular, in @milkdown/preset-gfm's table
+   schema) - pressing Enter inside a cell inserts a line break *within*
+   that one paragraph rather than a sibling block, so line-height is the
+   only property that repeats per line the way padding (a one-time offset)
+   can't. That budget only lands exactly on the grid, with no per-row
+   fudging, if nothing else in the cell box adds height of its own -
+   `border-collapse` doesn't cooperate here: it adds one shared 1px border
+   per row boundary (n rows -> n+1 border lines) on top of the content,
+   which compounds worse the more rows (or wrapped lines) a table has.
+   `box-shadow` paints the same grid-line look without being counted in
+   layout at all, so cells draw their own bottom/right edge and the table
+   itself (above) draws the missing top/left edge, with zero px added to
+   the table's rendered size regardless of row count. */
+.prose-note.note-look-paper th,
+.prose-note.note-look-paper td,
+.prose-note.note-look-index-card th,
+.prose-note.note-look-index-card td {
+  padding: 0 0.7em;
+  border: none;
+  box-shadow: inset 0 -1px 0 0 var(--table-border), inset -1px 0 0 0 var(--table-border);
+}
 
 /* ---------- Milkdown WYSIWYG editor ---------- */
 .prose-note :is(.ProseMirror) {

@@ -13,6 +13,7 @@ import {
   ListChecks,
   ListOrdered,
   Minus as DividerIcon,
+  Palette,
   RemoveFormatting,
   Strikethrough,
   Table2,
@@ -38,7 +39,7 @@ import {
 } from "@milkdown/kit/preset/commonmark";
 import { redoCommand, undoCommand } from "@milkdown/kit/plugin/history";
 import { useDebouncedCallback } from "../hooks/useDebouncedCallback";
-import { readSketch, writeAttachment, writeSketch } from "../utils/fsNotes";
+import { getNoteLook, readSketch, setNoteLook, writeAttachment, writeSketch } from "../utils/fsNotes";
 import type { BlockStyle, EditorSelectionState } from "../milkdown/setup";
 import { getSelectionState, registerMilkdownPlugins } from "../milkdown/setup";
 import { setBlockAlign, setTableColumnAlign } from "../milkdown/alignmentCommands";
@@ -71,7 +72,7 @@ import { clearFormatting } from "../milkdown/formatCommands";
 import { insertFlashcard } from "../milkdown/flashcardNode";
 import { SketchLayer } from "./SketchLayer";
 import { DEFAULT_SKETCH_COLOR, SKETCH_TOOL_SIZES, SketchToolbar } from "./SketchToolbar";
-import type { SketchStroke, SketchTool } from "../types";
+import type { NoteLook, SketchStroke, SketchTool } from "../types";
 
 type SaveStatus = "idle" | "pending" | "saving" | "saved";
 
@@ -107,6 +108,13 @@ const TEXT_STYLES: { style: BlockStyle; label: string; className: string }[] = [
   { style: 3, label: "Subheading", className: "text-base font-semibold" },
   { style: 2, label: "Heading", className: "text-lg font-bold" },
   { style: 1, label: "Title", className: "text-xl font-bold" },
+];
+
+const NOTE_LOOKS: { value: NoteLook; label: string }[] = [
+  { value: "plain", label: "Plain" },
+  { value: "paper", label: "Paper" },
+  { value: "grid", label: "Grid" },
+  { value: "index-card", label: "Index card" },
 ];
 
 /** Closes a popover when the user clicks anywhere outside all of `refs`. */
@@ -221,11 +229,59 @@ function TextStyleDropdown({
   );
 }
 
+function LookDropdown({ look, onSelect }: { look: NoteLook; onSelect: (look: NoteLook) => void }) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const current = NOTE_LOOKS.find((l) => l.value === look) ?? NOTE_LOOKS[0];
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Note look"
+        aria-label="Note look"
+        aria-expanded={open}
+        className="btn-ghost hover:bg-surface-hover flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs"
+      >
+        <Palette size={13} />
+        <span className="max-w-20 truncate">{current.label}</span>
+        <ChevronDown size={12} />
+      </button>
+      {open && (
+        <ToolbarPopover
+          anchorRef={anchorRef}
+          onClose={() => setOpen(false)}
+          className="glass-panel shadow-app-lg border-subtle w-40 overflow-hidden rounded-lg border py-1"
+        >
+          {NOTE_LOOKS.map((l) => (
+            <button
+              key={l.value}
+              type="button"
+              onClick={() => {
+                onSelect(l.value);
+                setOpen(false);
+              }}
+              className={`hover:bg-surface-hover flex w-full items-center px-3 py-1.5 text-left text-sm ${
+                l.value === look ? "text-accent bg-accent-soft" : "text-primary"
+              }`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </ToolbarPopover>
+      )}
+    </div>
+  );
+}
+
 type ToolbarAction = {
   icon: React.ComponentType<{ size?: number }>;
   label: string;
   action: () => void;
   isActive?: boolean;
+  disabled?: boolean;
 };
 
 /** Combines related actions (e.g. Bold/Italic) into a single button: clicking
@@ -239,6 +295,7 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
 
   const activeIndex = items.findIndex((item) => item.isActive);
   const current = items[activeIndex >= 0 ? activeIndex : lastIndex];
+  const allDisabled = items.every((item) => item.disabled);
 
   const openNow = useCallback(() => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -255,9 +312,10 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
   }, []);
 
   return (
-    <div ref={anchorRef} className="relative flex shrink-0" onMouseEnter={openNow} onMouseLeave={closeSoon}>
+    <div ref={anchorRef} className="relative flex shrink-0" onMouseEnter={allDisabled ? undefined : openNow} onMouseLeave={closeSoon}>
       <button
         type="button"
+        disabled={current.disabled}
         onClick={() => {
           setLastIndex(items.indexOf(current));
           current.action();
@@ -265,12 +323,12 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
         title={current.label}
         aria-label={current.label}
         aria-pressed={activeIndex >= 0}
-        className={`btn-ghost relative h-7 w-7 shrink-0 ${activeIndex >= 0 ? "bg-accent-soft text-accent" : ""}`}
+        className={`btn-ghost relative h-7 w-7 shrink-0 ${activeIndex >= 0 ? "bg-accent-soft text-accent" : ""} ${current.disabled ? "cursor-not-allowed opacity-40" : ""}`}
       >
         <current.icon size={14} />
         <ChevronDown size={8} className="absolute bottom-0 right-0 opacity-50" />
       </button>
-      {open && (
+      {open && !allDisabled && (
         <ToolbarPopover
           anchorRef={anchorRef}
           onClose={() => setOpen(false)}
@@ -281,6 +339,7 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
               <button
                 key={item.label}
                 type="button"
+                disabled={item.disabled}
                 onClick={() => {
                   setLastIndex(idx);
                   item.action();
@@ -289,7 +348,7 @@ function ToolbarButtonGroup({ items }: { items: ToolbarAction[] }) {
                 title={item.label}
                 aria-label={item.label}
                 aria-pressed={item.isActive}
-                className={`btn-ghost h-7 w-7 shrink-0 ${item.isActive ? "bg-accent-soft text-accent" : ""}`}
+                className={`btn-ghost h-7 w-7 shrink-0 ${item.isActive ? "bg-accent-soft text-accent" : ""} ${item.disabled ? "cursor-not-allowed opacity-40" : ""}`}
               >
                 <item.icon size={14} />
               </button>
@@ -548,6 +607,29 @@ function NoteEditor({
     [get],
   );
 
+  // --- Note look: visual skin, independent of content ------------------
+  const [look, setLook] = useState<NoteLook>("plain");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const value = await getNoteLook(notePath);
+      if (cancelled) return;
+      setLook(value);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // notePath is stable for the lifetime of this component (Editor is
+    // remounted per-note via a `key` prop in App), so this only runs once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleSelectLook(next: NoteLook) {
+    setLook(next);
+    setNoteLook(notePath, next);
+  }
+
   // --- Sketch mode: ink layer state -----------------------------------
   const [strokes, setStrokes] = useState<SketchStroke[]>([]);
   const [sketchTool, setSketchTool] = useState<SketchTool>("pen");
@@ -802,24 +884,31 @@ function NoteEditor({
     action: () => runAndSync((ctx) => clearFormatting(ctx)),
   };
 
+  // Milkdown's list_item schema requires a paragraph as its first child, so
+  // headings can't be wrapped into a list item (see listCommands.ts) -
+  // disable the buttons on a heading line instead of letting them no-op.
+  const listDisabled = selectionState.blockStyle !== "paragraph";
   const listGroup: ToolbarAction[] = [
     {
       icon: List,
       label: "Bullet list",
       action: () => runAndSync(toggleBulletList),
       isActive: selectionState.list === "bullet",
+      disabled: listDisabled,
     },
     {
       icon: ListOrdered,
       label: "Numbered list",
       action: () => runAndSync(toggleOrderedList),
       isActive: selectionState.list === "ordered",
+      disabled: listDisabled,
     },
     {
       icon: ListChecks,
       label: "Checklist",
       action: () => runAndSync(toggleTaskItem),
       isActive: selectionState.list === "task",
+      disabled: listDisabled,
     },
   ];
 
@@ -925,6 +1014,8 @@ function NoteEditor({
               <Icon size={14} />
             </button>
           ))}
+          <div className="divider mx-1 h-5 w-px shrink-0" />
+          <LookDropdown look={look} onSelect={handleSelectLook} />
           {uploadError && <span className="text-danger ml-2 shrink-0 text-xs">{uploadError}</span>}
         </div>
       )}
@@ -937,7 +1028,7 @@ function NoteEditor({
       />
 
       <div
-        className={`prose-note milkdown-scroll h-full flex-1 overflow-y-auto px-12 py-8 @max-lg:px-6 @max-lg:py-5 @max-sm:px-3 @max-sm:py-3 ${sketchMode ? "select-none" : ""}`}
+        className={`prose-note milkdown-scroll h-full flex-1 overflow-y-auto px-12 py-8 @max-lg:px-6 @max-lg:py-5 @max-sm:px-3 @max-sm:py-3 ${sketchMode ? "select-none" : ""} ${look !== "plain" ? `note-look-${look}` : ""}`}
       >
         <div
           ref={sketchWrapperRef}

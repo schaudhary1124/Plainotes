@@ -8,6 +8,7 @@ import {
 } from "@milkdown/kit/preset/gfm";
 import { tableNodes } from "@milkdown/kit/prose/tables";
 import { $remark } from "@milkdown/kit/utils";
+import { defaultHandlers } from "mdast-util-to-markdown";
 
 /** Loose shape for the mdast nodes remark hands us - only the fields this
  * file actually reads/writes are named, everything else passes through via
@@ -318,6 +319,105 @@ function processChildren(children: MdastNode[] | undefined) {
  * pipe tables into mdast `table` nodes by the time this runs. */
 export const tableSidecarRemark = $remark("plainotesTableFormatting", () => () => (tree) => {
   processChildren((tree as unknown as MdastNode).children);
+});
+
+/** Loose shape covering just the `state` field this file's handler reads -
+ * mirrors the loose-typing convention above rather than importing
+ * mdast-util-to-markdown's real (and much larger) `State` type. */
+interface ToMarkdownStateWithStack {
+  stack: string[];
+}
+
+/** GFM table cells can't contain a literal newline (each table row has to be
+ * one physical line of markdown), so mdast-util-gfm-table flags '\n' as
+ * unsafe inside a `tableCell` construct - and the library's own default
+ * `break` handler (mdast-util-to-markdown's handle/break.js), on seeing that,
+ * silently swaps the line break for a single space instead of erroring. That
+ * made every newline typed into a table cell (via tableLineBreak.ts's Enter
+ * handling, or Shift-Enter) vanish the moment the note was saved and
+ * reloaded. Overriding the handler to emit `<br data-plainotes-break>` while
+ * inside a table cell - a variant of the standard, widely-supported way to
+ * force a line break in a markdown table cell - fixes that; outside table
+ * cells this defers to the library's real default so other unsafe-context
+ * handling (e.g. setext headings) is untouched.
+ *
+ * A plain `<br>` won't do: @milkdown/preset-commonmark's
+ * remarkPreserveEmptyLinePlugin (bundled into `commonmark` in setup.ts, for
+ * an unrelated feature - preserving blank lines between paragraphs) scans the
+ * *entire* tree for any html node whose value is exactly `<br>`, `<br/>`,
+ * `<br />`, or `<br >` and deletes it outright, table cells included. The
+ * data attribute keeps this out of that exact-string blacklist while still
+ * rendering as a real line break in any other markdown viewer, since
+ * unrecognized attributes on `<br>` are simply ignored by any HTML parser. */
+const CELL_BREAK_TAG = "<br data-plainotes-break>";
+
+function tableCellAwareBreak(
+  node: unknown,
+  parent: unknown,
+  state: ToMarkdownStateWithStack,
+  info: unknown,
+): string {
+  if (state.stack.includes("tableCell")) return CELL_BREAK_TAG;
+  return (defaultHandlers.break as (n: unknown, p: unknown, s: unknown, i: unknown) => string)(
+    node,
+    parent,
+    state,
+    info,
+  );
+}
+
+/** The other half of tableCellAwareBreak: when a table cell is parsed back
+ * from markdown, a `<br data-plainotes-break>` lands as a raw inline `html`
+ * mdast node (same as any other unrecognized inline tag) rather than the
+ * `break` node a real line break would produce. Swap it back in place so it
+ * flows into hardbreakSchema's `parseMarkdown` (which matches on
+ * `type === "break"`) exactly like a Shift-Enter break would. */
+const BR_TAG_PATTERN = /^<br\s+data-plainotes-break\s*\/?>$/i;
+
+function convertCellBreaks(children: MdastNode[] | undefined) {
+  if (!children) return;
+  for (let i = 0; i < children.length; i++) {
+    const node = children[i];
+    if (node.type === "html" && typeof node.value === "string" && BR_TAG_PATTERN.test(node.value.trim())) {
+      children[i] = { type: "break" };
+    }
+  }
+}
+
+/** Recursively finds every `tableCell` in the tree and converts its `<br>`
+ * children - cells can be nested arbitrarily deep inside other block
+ * content (e.g. a list within a cell), so this walks the whole tree rather
+ * than just one row/table level. */
+function convertCellBreaksInTree(children: MdastNode[] | undefined) {
+  if (!children) return;
+  for (const node of children) {
+    if (node.type === "tableCell") convertCellBreaks(node.children);
+    convertCellBreaksInTree(node.children);
+  }
+}
+
+interface RemarkProcessorLike {
+  data(key: "toMarkdownExtensions"): unknown[] | undefined;
+  data(key: "toMarkdownExtensions", value: unknown[]): void;
+}
+
+/** Registers both directions of the table-cell line-break fix: a tree
+ * transform (parse direction) that turns `<br>` html nodes inside table
+ * cells back into `break` nodes, plus a `mdast-util-to-markdown` handler
+ * extension (stringify direction) that renders `break` nodes inside table
+ * cells as `<br>` instead of losing them to a space. Same two-sided
+ * registration pattern as textDecorationMarks.ts's textDecorationRemark.
+ * Must run after `.use(gfm)`, same ordering requirement as
+ * tableSidecarRemark above. */
+export const tableCellBreakRemark = $remark("plainotesTableCellBreaks", () => {
+  return function attachTableCellBreaks(this: RemarkProcessorLike) {
+    const extensions = this.data("toMarkdownExtensions") ?? [];
+    this.data("toMarkdownExtensions", [...extensions, { handlers: { break: tableCellAwareBreak } }]);
+
+    return (tree: unknown) => {
+      convertCellBreaksInTree((tree as MdastNode).children);
+    };
+  };
 });
 
 /** Registration order matters here, not just for readability: Milkdown

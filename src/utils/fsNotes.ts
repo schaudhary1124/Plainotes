@@ -11,7 +11,7 @@ import {
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
-import type { FolderEntry, NoteEntry, NoteSummary, SketchData, TreeEntry } from "../types";
+import type { FolderEntry, NoteEntry, NoteLook, NoteSummary, SketchData, TreeEntry } from "../types";
 
 /** Notes live under the user's OS Documents folder, e.g. ~/Documents/PlaiNotes */
 export const NOTES_DIR = "PlaiNotes";
@@ -42,15 +42,22 @@ interface NotesMeta {
    * Tracked explicitly rather than read off filesystem birthtime, which Tauri
    * notes "may not be available on all platforms" (notably Linux). */
   createdAt: Record<string, number>;
+  /** Maps a note's relative path to its visual look (see NoteLook). Notes without
+   * an entry here use the "plain" look. */
+  noteLooks: Record<string, string>;
 }
 
 async function readMeta(): Promise<NotesMeta> {
   try {
     const raw = await readTextFile(fullPath(META_FILE), { baseDir: BASE_DIR });
     const parsed = JSON.parse(raw);
-    return { folderColors: parsed.folderColors ?? {}, createdAt: parsed.createdAt ?? {} };
+    return {
+      folderColors: parsed.folderColors ?? {},
+      createdAt: parsed.createdAt ?? {},
+      noteLooks: parsed.noteLooks ?? {},
+    };
   } catch {
-    return { folderColors: {}, createdAt: {} };
+    return { folderColors: {}, createdAt: {}, noteLooks: {} };
   }
 }
 
@@ -103,6 +110,7 @@ function remapMetaPaths(meta: NotesMeta, oldPath: string, newPath: string): Note
   return {
     folderColors: remapPathKeys(meta.folderColors, oldPath, newPath),
     createdAt: remapPathKeys(meta.createdAt, oldPath, newPath),
+    noteLooks: remapPathKeys(meta.noteLooks, oldPath, newPath),
   };
 }
 
@@ -111,6 +119,7 @@ function dropMetaPaths(meta: NotesMeta, path: string): NotesMeta {
   return {
     folderColors: dropPathKeys(meta.folderColors, path),
     createdAt: dropPathKeys(meta.createdAt, path),
+    noteLooks: dropPathKeys(meta.noteLooks, path),
   };
 }
 
@@ -119,6 +128,20 @@ export async function setFolderColor(path: string, color: string | null): Promis
   const meta = await readMeta();
   if (color) meta.folderColors[path] = color;
   else delete meta.folderColors[path];
+  await writeMeta(meta);
+}
+
+/** Reads the visual look for the note at `path`, or "plain" if unset. */
+export async function getNoteLook(path: string): Promise<NoteLook> {
+  const meta = await readMeta();
+  return (meta.noteLooks[path] as NoteLook | undefined) ?? "plain";
+}
+
+/** Sets (or clears, when `look` is "plain") the visual look for the note at `path`. */
+export async function setNoteLook(path: string, look: NoteLook): Promise<void> {
+  const meta = await readMeta();
+  if (look !== "plain") meta.noteLooks[path] = look;
+  else delete meta.noteLooks[path];
   await writeMeta(meta);
 }
 
@@ -299,7 +322,12 @@ async function allNoteTitles(excludePath?: string): Promise<Set<string>> {
 }
 
 /** Creates a new note with a unique name (unique across the whole vault) inside `parentPath`. */
-export async function createNote(parentPath: string, desiredTitle?: string): Promise<NoteSummary> {
+export async function createNote(
+  parentPath: string,
+  desiredTitle?: string,
+  content: string = STARTER_CONTENT,
+  look: NoteLook = "plain",
+): Promise<NoteSummary> {
   const taken = await allNoteTitles();
   const base = desiredTitle?.trim() || "Untitled";
   let title = base;
@@ -311,10 +339,11 @@ export async function createNote(parentPath: string, desiredTitle?: string): Pro
 
   const name = `${title}${NOTE_EXTENSION}`;
   const relPath = joinPath(parentPath, name);
-  await writeNote(relPath, STARTER_CONTENT);
+  await writeNote(relPath, content);
 
   const meta = await readMeta();
   meta.createdAt[relPath] = Date.now();
+  if (look !== "plain") meta.noteLooks[relPath] = look;
   await writeMeta(meta);
 
   return { path: relPath, title, parentPath };

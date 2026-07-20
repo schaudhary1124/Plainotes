@@ -63,6 +63,10 @@ export type StudyItem = Flashcard | MultipleChoice;
 export type ThemeName = "light" | "midnight";
 export type BackgroundStyle = "flat" | "soft" | "glass";
 
+/** Per-note visual skin, independent of the note's content - see fsNotes.ts's
+ * `noteLooks` meta entry for persistence. */
+export type NoteLook = "plain" | "paper" | "grid" | "index-card";
+
 export type NotesViewMode = "grid" | "list";
 
 export interface AppSettings {

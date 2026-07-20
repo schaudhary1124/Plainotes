@@ -22,7 +22,7 @@ import { getListState, type ListState } from "./listCommands";
 import { taskListToggle } from "./taskListToggle";
 import { tabTrap } from "./tabTrap";
 import { tableLineBreak } from "./tableLineBreak";
-import { tableSchemaExtensionPlugins, tableSidecarRemark } from "./tableSchemaExtensions";
+import { tableCellBreakRemark, tableSchemaExtensionPlugins, tableSidecarRemark } from "./tableSchemaExtensions";
 import { tableGrips } from "./tableGrips";
 import { highlightSchema, strikethroughSchema, textDecorationPlugins, underlineSchema } from "./textDecorationMarks";
 
@@ -143,6 +143,9 @@ export function registerMilkdownPlugins(
     // raw pipe tables into mdast `table` nodes before it can attach the
     // sidecar comment's data onto them.
     .use(tableSidecarRemark)
+    // Same ordering requirement as tableSidecarRemark - see
+    // tableCellBreakRemark's own comment for what this fixes.
+    .use(tableCellBreakRemark)
     // Same ordering requirement as tableSidecarRemark: needs commonmark's
     // remarkHtmlTransformer to have already run so raw sidecar HTML nodes are
     // in their final flat shape. (The paragraph/heading schema patch itself

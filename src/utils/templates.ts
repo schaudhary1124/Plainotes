@@ -1,0 +1,67 @@
+import { BookOpen, CalendarCheck, FileText, Target, Users } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { NoteLook } from "../types";
+import { STARTER_CONTENT } from "./fsNotes";
+
+export interface NoteTemplate {
+  id: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  /** Suggested default look for notes created from this template - the user can change it later. */
+  look: NoteLook;
+  buildContent(): string;
+}
+
+function todayLabel(): string {
+  return new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date());
+}
+
+export const NOTE_TEMPLATES: NoteTemplate[] = [
+  {
+    id: "blank",
+    label: "Blank",
+    description: "Start with an empty note",
+    icon: FileText,
+    look: "plain",
+    buildContent: () => STARTER_CONTENT,
+  },
+  {
+    id: "lecture",
+    label: "Lecture notes",
+    description: "Topic, key points, and a summary",
+    icon: BookOpen,
+    look: "paper",
+    buildContent: () => `## Topic\n\n## Key points\n\n## Questions to review\n\n## Summary\n`,
+  },
+  {
+    id: "meeting",
+    label: "Meeting notes",
+    description: "Attendees, agenda, and action items",
+    icon: Users,
+    look: "plain",
+    buildContent: () =>
+      `## Attendees\n\n## Agenda\n\n## Discussion\n\n## Action items\n- [ ] Add action items here\n\n## Decisions\n`,
+  },
+  {
+    id: "project-brief",
+    label: "Project brief",
+    description: "Objective, scope, and timeline",
+    icon: Target,
+    look: "plain",
+    buildContent: () =>
+      `## Objective\n\n## Scope\n\n## Stakeholders\n\n## Timeline\n\n## Risks\n`,
+  },
+  {
+    id: "daily-review",
+    label: "Daily review",
+    description: "Wins, challenges, and tomorrow",
+    icon: CalendarCheck,
+    look: "paper",
+    buildContent: () => `## ${todayLabel()}\n\n## Wins\n\n## Challenges\n\n## Tomorrow\n`,
+  },
+];
+
+export function getTemplate(id: string): NoteTemplate {
+  return NOTE_TEMPLATES.find((t) => t.id === id) ?? NOTE_TEMPLATES[0];
+}

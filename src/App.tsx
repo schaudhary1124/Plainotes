@@ -11,7 +11,6 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ResizeHandles } from "./components/ResizeHandles";
 import { TabStrip } from "./components/TabStrip";
 import {
-  STARTER_CONTENT,
   createFolder,
   createNote,
   deleteFolder,
@@ -25,6 +24,7 @@ import {
   setFolderColor,
   writeNote,
 } from "./utils/fsNotes";
+import { getTemplate } from "./utils/templates";
 import { applySettingsToDocument, loadSettings, saveSettings } from "./utils/settings";
 import {
   detachInitPromise,
@@ -446,15 +446,17 @@ function App() {
   }, [flushActiveNote]);
 
   const handleCreateNote = useCallback(
-    async (parentPath: string, title?: string) => {
+    async (parentPath: string, title?: string, templateId: string = "blank") => {
       await flushActiveNote();
-      const note = await createNote(parentPath, title);
+      const template = getTemplate(templateId);
+      const content = template.buildContent();
+      const note = await createNote(parentPath, title, content, template.look);
       await refreshTree();
-      addNoteToIndex(note.path, STARTER_CONTENT);
-      savedContentRef.current = STARTER_CONTENT;
+      addNoteToIndex(note.path, content);
+      savedContentRef.current = content;
       setTabs((current) => insertTabNextToActive(current, activeNotePathRef.current, note.path));
       setActiveNotePath(note.path);
-      setActiveContent(STARTER_CONTENT);
+      setActiveContent(content);
       setMode("edit");
       setView("note");
     },
@@ -731,12 +733,12 @@ function App() {
           <NewItemDialog
             kind={newItemDialog.kind}
             defaultName={newItemDialog.kind === "folder" ? "New Folder" : "Untitled"}
-            onCreate={(name, color) => {
+            onCreate={(name, color, templateId) => {
               setNewItemDialog(null);
               if (newItemDialog.kind === "folder") {
                 handleCreateFolder(newItemDialog.parentPath, name, color);
               } else {
-                handleCreateNote(newItemDialog.parentPath, name);
+                handleCreateNote(newItemDialog.parentPath, name, templateId);
               }
             }}
             onCancel={() => setNewItemDialog(null)}
