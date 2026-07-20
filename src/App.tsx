@@ -5,6 +5,7 @@ import { Header } from "./components/Header";
 import { NotesBrowser } from "./components/NotesBrowser";
 import { Editor } from "./components/Editor";
 import { StudyView } from "./components/StudyView";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NewItemDialog } from "./components/NewItemDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -18,6 +19,7 @@ import {
   ensureNotesDir,
   flattenNotes,
   listNoteTree,
+  migrateLegacyStudyItems,
   moveEntry,
   readNote,
   renameEntry,
@@ -100,7 +102,7 @@ function App() {
   const [tabs, setTabs] = useState<string[]>([]);
   const [activeNotePath, setActiveNotePath] = useState<string | null>(null);
   const [activeContent, setActiveContent] = useState("");
-  const [mode, setMode] = useState<AppMode>("edit");
+  const [tabModes, setTabModes] = useState<Record<string, AppMode>>({});
   const [sketchMode, setSketchMode] = useState(false);
   const [view, setView] = useState<"browse" | "note">("browse");
   const [browseFolder, setBrowseFolder] = useState("");
@@ -126,6 +128,7 @@ function App() {
   // Bumped to force the Editor to remount (and pick up fresh initialContent) when another
   // window's save is applied here, since Milkdown only reads its initial value on mount.
   const [reloadToken, setReloadToken] = useState(0);
+  const activeMode = activeNotePath ? tabModes[activeNotePath] ?? "edit" : "edit";
 
   useEffect(() => {
     activeContentRef.current = activeContent;
@@ -136,6 +139,24 @@ function App() {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  const setTabMode = useCallback((path: string, nextMode: AppMode) => {
+    setTabModes((current) => (current[path] === nextMode ? current : { ...current, [path]: nextMode }));
+  }, []);
+
+  const handleModeChange = useCallback(
+    (nextMode: AppMode) => {
+      const path = activeNotePathRef.current;
+      if (!path) return;
+      try {
+        setTabMode(path, nextMode);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("Error while changing mode:", err);
+      }
+    },
+    [setTabMode],
+  );
 
   // Persist the main window's open tabs so they can be restored on next launch (see the
   // boot effect below). Secondary windows never write this - see isMainWindow's definition.
@@ -191,7 +212,8 @@ function App() {
   const selectNote = useCallback(
     async (path: string) => {
       await flushActiveNote();
-      const content = await readNote(path);
+      const raw = await readNote(path);
+      const content = await migrateLegacyStudyItems(path, raw);
       savedContentRef.current = content;
       setActiveNotePath(path);
       setActiveContent(content);
@@ -203,12 +225,13 @@ function App() {
    * behavior) - or just switches to it if it's already open in this window. */
   const handleOpenNote = useCallback(
     async (path: string) => {
+      const isNewTab = !tabsRef.current.includes(path);
       setTabs((current) => insertTabNextToActive(current, activeNotePathRef.current, path));
       await selectNote(path);
       setView("note");
-      setMode("edit");
+      if (isNewTab) setTabMode(path, "edit");
     },
-    [selectNote],
+    [selectNote, setTabMode],
   );
 
   const handleSelectTab = useCallback(
@@ -318,7 +341,7 @@ function App() {
             }
             setTabs([target.notePath]);
             setView("note");
-            setMode("edit");
+            setTabMode(target.notePath, "edit");
           } catch {
             // The requested note may have been deleted or moved since this
             // window was opened; fall back to the browse view.
@@ -351,7 +374,7 @@ function App() {
             try {
               await selectNote(activePath);
               setView("note");
-              setMode("edit");
+              setTabMode(activePath, "edit");
             } catch {
               // Fall back to browse if even the first restored note can't be read.
             }
@@ -381,30 +404,51 @@ function App() {
   // silently overwrites the other's changes on its next autosave. Skipped if this window
   // has local edits that haven't been persisted yet, to avoid clobbering active typing.
   useEffect(() => {
+    // `listen` resolves asynchronously; if this effect is torn down (e.g. by a
+    // hot reload) before that resolves, `unlisten` would still be undefined when
+    // cleanup runs below, leaking this listener forever with a stale closure -
+    // guard with `cancelled` so a late resolution unregisters itself instead.
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
-      unlisten = await listenForNoteSaved((path, content) => {
+      const fn = await listenForNoteSaved((path, content) => {
         updateNoteInIndex(path, content);
         if (path !== activeNotePathRef.current) return;
         if (activeContentRef.current !== savedContentRef.current) return;
+        // Already showing this exact content (e.g. the other window's save just
+        // echoed ours back unchanged) - skip the remount. Forcing one anyway would
+        // re-mount a fresh Milkdown instance, whose first internal update event
+        // fires unconditionally (no prevMarkdown yet), which looks like a genuine
+        // edit and triggers another identical autosave + broadcast - ping-ponging
+        // between two windows with the same note open forever.
+        if (content === activeContentRef.current) return;
         savedContentRef.current = content;
         setActiveContent(content);
         setReloadToken((token) => token + 1);
       });
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
     })();
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   // Cross-window tab merging, target side: another window's tab was dropped on this window's
   // tab strip (see TabStrip.tsx's finishDragOut) - adopt it as a new tab here, next to whatever
   // is currently active, using the handed-off content directly rather than reading disk.
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
       // `listen` defaults to receiving events addressed to *any* window - without this target
       // filter, every window (including whichever one sent the emitTo below) would receive
       // this, so the sender would immediately re-insert the tab it had just removed.
-      unlisten = await listen<MergeTabPayload>(
+      const fn = await listen<MergeTabPayload>(
         MERGE_TAB_EVENT,
         async (event) => {
           const { path, content } = event.payload;
@@ -414,32 +458,49 @@ function App() {
           setActiveNotePath(path);
           setActiveContent(content);
           setView("note");
-          setMode("edit");
+          setTabMode(path, "edit");
           await appWindow.setFocus();
         },
         { target: appWindow.label },
       );
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
     })();
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [flushActiveNote]);
 
   // Window chrome: track maximize state so the shell can go edge-to-edge,
   // and flush any pending edit before the window actually closes.
   useEffect(() => {
+    let cancelled = false;
     let unlistenResize: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;
     (async () => {
       setIsMaximized(await appWindow.isMaximized());
-      unlistenResize = await appWindow.onResized(async () => {
+      const resizeFn = await appWindow.onResized(async () => {
         setIsMaximized(await appWindow.isMaximized());
       });
-      unlistenClose = await appWindow.onCloseRequested(async (event) => {
+      const closeFn = await appWindow.onCloseRequested(async (event) => {
         event.preventDefault();
         await flushActiveNote();
         await appWindow.destroy();
       });
+      if (cancelled) {
+        resizeFn();
+        closeFn();
+        return;
+      }
+      unlistenResize = resizeFn;
+      unlistenClose = closeFn;
     })();
     return () => {
+      cancelled = true;
       unlistenResize?.();
       unlistenClose?.();
     };
@@ -457,10 +518,10 @@ function App() {
       setTabs((current) => insertTabNextToActive(current, activeNotePathRef.current, note.path));
       setActiveNotePath(note.path);
       setActiveContent(content);
-      setMode("edit");
+      setTabMode(note.path, "edit");
       setView("note");
     },
-    [flushActiveNote, refreshTree],
+    [flushActiveNote, refreshTree, setTabMode],
   );
 
   const handleCreateFolder = useCallback(
@@ -613,8 +674,8 @@ function App() {
         <Header
           view={view}
           onBack={handleBack}
-          mode={mode}
-          onModeChange={setMode}
+          mode={activeMode}
+          onModeChange={handleModeChange}
           sketchMode={sketchMode}
           onToggleSketchMode={() => setSketchMode((v) => !v)}
           onDuplicateWindow={handleDuplicateWindow}
@@ -687,7 +748,7 @@ function App() {
                 />
               )}
 
-              {bootStatus === "ready" && view === "note" && activeNote && mode === "edit" && (
+              {bootStatus === "ready" && view === "note" && activeNote && activeMode === "edit" && (
                 <Editor
                   key={`${activeNote.path}:${reloadToken}`}
                   notePath={activeNote.path}
@@ -704,8 +765,10 @@ function App() {
                 />
               )}
 
-              {bootStatus === "ready" && view === "note" && activeNote && mode === "study" && (
-                <StudyView key={activeNote.path} content={activeContent} />
+              {bootStatus === "ready" && view === "note" && activeNote && activeMode === "study" && (
+                <ErrorBoundary>
+                  <StudyView key={activeNote.path} notePath={activeNote.path} />
+                </ErrorBoundary>
               )}
             </main>
           )}

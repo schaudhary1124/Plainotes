@@ -4,11 +4,9 @@ import {
   Bold,
   ChevronDown,
   Code,
-  HelpCircle,
   Highlighter,
   ImagePlus,
   Italic,
-  Layers,
   List,
   ListChecks,
   ListOrdered,
@@ -69,7 +67,6 @@ import {
   resolveGestureRange,
 } from "../milkdown/sketchDecorations";
 import { clearFormatting } from "../milkdown/formatCommands";
-import { insertFlashcard } from "../milkdown/flashcardNode";
 import { SketchLayer } from "./SketchLayer";
 import { DEFAULT_SKETCH_COLOR, SKETCH_TOOL_SIZES, SketchToolbar } from "./SketchToolbar";
 import type { NoteLook, SketchStroke, SketchTool } from "../types";
@@ -934,16 +931,6 @@ function NoteEditor({
       icon: Code,
       label: "Code block",
       action: () => runAndSync((ctx) => callCommand(createCodeBlockCommand.key)(ctx)),
-    },
-    {
-      icon: Layers,
-      label: "Flashcard",
-      action: () => run((ctx) => insertFlashcard(ctx, "qa")),
-    },
-    {
-      icon: HelpCircle,
-      label: "Multiple choice",
-      action: () => run((ctx) => insertFlashcard(ctx, "mcq")),
     },
   ];
 

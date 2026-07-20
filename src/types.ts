@@ -46,6 +46,8 @@ export interface Flashcard {
   id: string;
   question: string;
   answer: string;
+  /** Optional explanation shown alongside the answer, e.g. why it's correct. */
+  reason?: string;
 }
 
 export interface MultipleChoice {
@@ -56,6 +58,8 @@ export interface MultipleChoice {
   answer: string;
   /** Index of `answer` within `options` */
   answerIndex: number;
+  /** Optional explanation shown after answering, e.g. why it's correct. */
+  reason?: string;
 }
 
 export type StudyItem = Flashcard | MultipleChoice;

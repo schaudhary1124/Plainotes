@@ -12,8 +12,8 @@ import { defaultHandlers } from "mdast-util-to-markdown";
 
 /** Loose shape for the mdast nodes remark hands us - only the fields this
  * file actually reads/writes are named, everything else passes through via
- * the index signature (mirrors the `node as never` escape hatch already
- * used for mdast nodes in flashcardNode.ts). */
+ * the index signature (mirrors the `node as never` escape hatch pattern
+ * used elsewhere for mdast nodes). */
 interface MdastNode {
   type: string;
   value?: string;

@@ -62,12 +62,14 @@ export function Header({
     setAlwaysOnTop(next);
   }
 
+  const noteToolsDisabled = view !== "note" || mode !== "edit";
+
   return (
     <header
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
       className="glass-panel relative z-20 flex h-10 shrink-0 items-center gap-1.5 px-2.5 @max-sm:gap-1 @max-sm:px-2"
     >
-      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {settingsOpen ? (
           <button
             type="button"
@@ -112,12 +114,14 @@ export function Header({
         {!settingsOpen && (
           <>
             {view === "note" && <ModeToggle mode={mode} onChange={onModeChange} />}
-            {view === "note" && mode === "edit" && (
+            {view === "note" && (
               <button
                 type="button"
                 onClick={onToggleSketchMode}
-                className={`btn-ghost h-6 w-6 ${sketchMode ? "bg-accent-soft text-accent" : ""}`}
-                title={sketchMode ? "Exit sketch mode" : "Sketch on this note"}
+                disabled={noteToolsDisabled}
+                aria-disabled={noteToolsDisabled}
+                className={`btn-ghost h-6 w-6 ${sketchMode ? "bg-accent-soft text-accent" : ""} ${noteToolsDisabled ? "cursor-not-allowed opacity-50" : ""}`}
+                title={noteToolsDisabled ? "Sketch on this note (edit mode only)" : sketchMode ? "Exit sketch mode" : "Sketch on this note"}
                 aria-pressed={sketchMode}
                 aria-label="Toggle sketch mode"
               >
@@ -133,12 +137,14 @@ export function Header({
             >
               <Settings size={15} />
             </button>
-            {view === "note" && mode === "edit" && (
+            {view === "note" && (
               <button
                 type="button"
                 onClick={onToggleToolbar}
-                className={`btn-ghost h-6 w-6 ${!toolbarVisible ? "bg-accent-soft text-accent" : ""}`}
-                title={toolbarVisible ? "Hide formatting toolbar" : "Show formatting toolbar"}
+                disabled={noteToolsDisabled}
+                aria-disabled={noteToolsDisabled}
+                className={`btn-ghost h-6 w-6 ${!toolbarVisible ? "bg-accent-soft text-accent" : ""} ${noteToolsDisabled ? "cursor-not-allowed opacity-50" : ""}`}
+                title={noteToolsDisabled ? "Hide formatting toolbar (edit mode only)" : toolbarVisible ? "Hide formatting toolbar" : "Show formatting toolbar"}
                 aria-pressed={!toolbarVisible}
                 aria-label="Toggle formatting toolbar"
               >

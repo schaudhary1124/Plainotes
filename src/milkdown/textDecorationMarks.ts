@@ -5,7 +5,7 @@ import { toggleMark } from "@milkdown/kit/prose/commands";
 import { $markSchema, $remark } from "@milkdown/kit/utils";
 
 /** Loose shape for the mdast nodes remark hands us - mirrors the same escape
- * hatch already used in tableSchemaExtensions.ts/flashcardNode.ts. */
+ * hatch already used in tableSchemaExtensions.ts. */
 interface MdastNode {
   type: string;
   value?: string;

@@ -1,15 +1,11 @@
 import type { Flashcard, MultipleChoice, StudyItem } from "../types";
 
-// Study syntax (each on its own line within a note):
+// Legacy study syntax (each on its own line within a note), from before
+// Study mode had its own separate storage:
 //   Q: <question> -> A: <answer>
 //   MCQ: <question> | <option 1, option 2, option 3> | <correct option>
-// Exported so the Milkdown flashcard node (src/milkdown/flashcardNode.ts) can
-// detect/round-trip the exact same syntax without the two ever drifting apart.
-// Capture groups allow zero-length matches (`.*`, not `.+`) so a card whose
-// fields haven't been filled in yet still round-trips through Markdown as a
-// flashcard/MCQ node instead of falling back to unparsed paragraph text -
-// completeness (non-empty question/answer/options) is checked separately
-// below, only when deciding whether a line is a usable *study item*.
+// Only used now by extractStudyItemsAndStrip, for one-time migration of notes
+// that still contain these lines - see fsNotes.ts's migrateLegacyStudyItems.
 export const FLASHCARD_PATTERN = /^Q:\s*(.*?)\s*->\s*A:\s*(.*)$/i;
 export const MCQ_PATTERN = /^MCQ:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*)$/i;
 
@@ -60,26 +56,37 @@ function parseMcqLine(line: string, id: string): MultipleChoice | null {
 
 /**
  * Extracts study items (flashcards and multiple-choice questions) from raw
- * Markdown note content. Recognized lines are removed from the surrounding
- * prose; unrecognized lines are ignored (not an error) so notes can freely
- * mix study syntax with regular Markdown.
+ * Markdown note content, for one-time migration of notes that predate Study
+ * mode's separate storage. Recognized lines are removed from the returned
+ * `content`; unrecognized lines are left untouched.
  */
-export function parseMarkdownForStudyItems(content: string): StudyItem[] {
+export function extractStudyItemsAndStrip(content: string): { items: StudyItem[]; content: string } {
   const items: StudyItem[] = [];
+  const keptLines: string[] = [];
 
   content.split(/\r?\n/).forEach((rawLine, index) => {
     const line = rawLine.trim();
-    if (!line) return;
+    if (!line) {
+      keptLines.push(rawLine);
+      return;
+    }
 
     const id = `${index}`;
     if (/^MCQ:/i.test(line)) {
       const mcq = parseMcqLine(line, id);
-      if (mcq) items.push(mcq);
+      if (mcq) {
+        items.push(mcq);
+        return;
+      }
     } else if (/^Q:/i.test(line)) {
       const flashcard = parseFlashcardLine(line, id);
-      if (flashcard) items.push(flashcard);
+      if (flashcard) {
+        items.push(flashcard);
+        return;
+      }
     }
+    keptLines.push(rawLine);
   });
 
-  return items;
+  return { items, content: keptLines.join("\n") };
 }

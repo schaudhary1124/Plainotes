@@ -11,7 +11,8 @@ import {
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
-import type { FolderEntry, NoteEntry, NoteLook, NoteSummary, SketchData, TreeEntry } from "../types";
+import { extractStudyItemsAndStrip } from "./markdownParser";
+import type { FolderEntry, NoteEntry, NoteLook, NoteSummary, SketchData, StudyItem, TreeEntry } from "../types";
 
 /** Notes live under the user's OS Documents folder, e.g. ~/Documents/PlaiNotes */
 export const NOTES_DIR = "PlaiNotes";
@@ -25,6 +26,9 @@ const ASSETS_DIR = "assets";
 // see the META_FILE note below. A same-folder sidecar with a non-".md" extension is
 // already invisible to buildTree without needing a leading dot.
 const SKETCH_EXTENSION = ".sketch.json";
+// Sidecar file next to the note holding its flashcards/MCQs, kept fully
+// separate from the note's Markdown content/editor - see StudyView.tsx.
+const STUDY_EXTENSION = ".study.json";
 // No leading dot: Tauri's fs scope glob matching (`PlaiNotes/**`) doesn't match dotfiles,
 // which would silently block reads/writes of this file.
 const META_FILE = "plainotes-meta.json";
@@ -177,6 +181,11 @@ function sketchPathFor(notePath: string): string {
   return notePath.slice(0, -NOTE_EXTENSION.length) + SKETCH_EXTENSION;
 }
 
+/** Sidecar study-items path for a note, e.g. "Work/Todo.md" -> "Work/Todo.study.json" */
+function studyPathFor(notePath: string): string {
+  return notePath.slice(0, -NOTE_EXTENSION.length) + STUDY_EXTENSION;
+}
+
 /** Creates the PlaiNotes folder in Documents on first run, if it doesn't exist yet. */
 export async function ensureNotesDir(): Promise<void> {
   const dirExists = await exists(NOTES_DIR, { baseDir: BASE_DIR });
@@ -283,6 +292,7 @@ export function writeNote(path: string, content: string): Promise<void> {
 export async function deleteNote(path: string): Promise<void> {
   await remove(fullPath(path), { baseDir: BASE_DIR });
   await deleteSketch(path);
+  await deleteStudyItems(path);
   const meta = await readMeta();
   await writeMeta(dropMetaPaths(meta, path));
 }
@@ -397,7 +407,10 @@ export async function renameEntry(
 
   const meta = await readMeta();
   await writeMeta(remapMetaPaths(meta, path, newPath));
-  if (!isFolder) await relocateSketch(path, newPath);
+  if (!isFolder) {
+    await relocateSketch(path, newPath);
+    await relocateStudyItems(path, newPath);
+  }
 
   return newPath;
 }
@@ -427,7 +440,10 @@ export async function moveEntry(path: string, targetParentPath: string): Promise
 
   const meta = await readMeta();
   await writeMeta(remapMetaPaths(meta, path, newPath));
-  if (path.endsWith(NOTE_EXTENSION)) await relocateSketch(path, newPath);
+  if (path.endsWith(NOTE_EXTENSION)) {
+    await relocateSketch(path, newPath);
+    await relocateStudyItems(path, newPath);
+  }
 
   return newPath;
 }
@@ -469,6 +485,72 @@ export async function deleteSketch(notePath: string): Promise<void> {
   } catch {
     // No sketch existed for this note - nothing to clean up.
   }
+}
+
+interface StudyData {
+  version: 1;
+  items: StudyItem[];
+}
+
+/** Reads a note's flashcards/MCQs, or an empty list if it has none. */
+export async function readStudyItems(notePath: string): Promise<StudyItem[]> {
+  try {
+    const raw = await readTextFile(fullPath(studyPathFor(notePath)), { baseDir: BASE_DIR });
+    const parsed = JSON.parse(raw) as StudyData;
+    return parsed.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persists a note's flashcards/MCQs to its sidecar file. */
+export async function writeStudyItems(notePath: string, items: StudyItem[]): Promise<void> {
+  const relPath = studyPathFor(notePath);
+  await mkdir(fullPath(parentOf(relPath)), { baseDir: BASE_DIR, recursive: true });
+  const data: StudyData = { version: 1, items };
+  await writeTextFile(fullPath(relPath), JSON.stringify(data), { baseDir: BASE_DIR });
+}
+
+/** Removes a note's study-items sidecar, if any. */
+export async function deleteStudyItems(notePath: string): Promise<void> {
+  try {
+    await remove(fullPath(studyPathFor(notePath)), { baseDir: BASE_DIR });
+  } catch {
+    // No study items existed for this note - nothing to clean up.
+  }
+}
+
+/** Moves a note's study-items sidecar (if any) alongside a rename/move of the note itself. */
+async function relocateStudyItems(oldNotePath: string, newNotePath: string): Promise<void> {
+  const oldStudyPath = fullPath(studyPathFor(oldNotePath));
+  const studyExists = await exists(oldStudyPath, { baseDir: BASE_DIR });
+  if (!studyExists) return;
+  const newStudyPath = studyPathFor(newNotePath);
+  await mkdir(fullPath(parentOf(newStudyPath)), { baseDir: BASE_DIR, recursive: true });
+  await rename(oldStudyPath, fullPath(newStudyPath), {
+    oldPathBaseDir: BASE_DIR,
+    newPathBaseDir: BASE_DIR,
+  });
+}
+
+/**
+ * One-time migration for notes saved before Study mode had its own storage:
+ * if `notePath` has no study-items sidecar yet, pulls any legacy `Q:`/`MCQ:`
+ * lines out of `content` into one, strips them from the note body, and
+ * persists both. Returns the (possibly stripped) content the caller should
+ * use going forward; a no-op returns `content` unchanged.
+ */
+export async function migrateLegacyStudyItems(notePath: string, content: string): Promise<string> {
+  const alreadyMigrated = await exists(fullPath(studyPathFor(notePath)), { baseDir: BASE_DIR });
+  if (alreadyMigrated) return content;
+
+  const { items, content: stripped } = extractStudyItemsAndStrip(content);
+  if (items.length === 0) return content;
+
+  const withIds = items.map((item) => ({ ...item, id: crypto.randomUUID() }));
+  await writeStudyItems(notePath, withIds);
+  await writeNote(notePath, stripped);
+  return stripped;
 }
 
 /** Saves an image attachment for `notePath` and returns its path relative to the notes root. */

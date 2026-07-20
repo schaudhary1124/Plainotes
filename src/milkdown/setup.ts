@@ -16,7 +16,6 @@ import { getBlockAlign, getTableCellAlign } from "./alignmentCommands";
 import { alignmentSidecarRemark, configureAlignmentSchemas, type BlockAlign } from "./alignmentSchemaExtensions";
 import { codeBlockExtensions, codeBlockLanguages } from "./codeBlock";
 import { codeBlockGrips } from "./codeBlockGrips";
-import { flashcardPlugins } from "./flashcardNode";
 import { imageView } from "./imageView";
 import { getListState, type ListState } from "./listCommands";
 import { taskListToggle } from "./taskListToggle";
@@ -120,11 +119,6 @@ export function registerMilkdownPlugins(
     // tableKeymap ("ExitTable" is also bound to plain Enter and would
     // otherwise win first, see tableLineBreak.ts).
     .use(tableLineBreak)
-    // flashcardPlugins registers first: Milkdown's markdown parser tries each
-    // registered node's `parseMarkdown.match` in registration order and stops
-    // at the first hit, and commonmark's `paragraph` schema matches *every*
-    // paragraph unconditionally - so flashcard detection has to run before it.
-    .use(flashcardPlugins)
     .use(commonmark)
     .use(gfm)
     // Swaps the plain <pre><code> rendering commonmark's codeBlockSchema
