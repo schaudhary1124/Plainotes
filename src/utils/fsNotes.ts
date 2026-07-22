@@ -21,6 +21,10 @@ const NOTE_EXTENSION = ".md";
 // which would silently block reads/writes under this folder. Hidden from the notes tree
 // via an explicit name check in buildTree instead.
 const ASSETS_DIR = "assets";
+// Same no-leading-dot reasoning as ASSETS_DIR. Deleted notes/folders are moved here (see
+// deleteNote/deleteFolder) rather than removed outright, keyed flatly by a random id so two
+// items with the same name/path can never collide inside trash - see trashName below.
+const TRASH_DIR = "trash";
 // Sibling file next to the note (not a dot-directory): Tauri's fs scope glob matching
 // (`PlaiNotes/**`) doesn't match dotfiles, which would silently block reads/writes -
 // see the META_FILE note below. A same-folder sidecar with a non-".md" extension is
@@ -39,6 +43,16 @@ const BASE_DIR = BaseDirectory.Document;
 
 export const STARTER_CONTENT = "";
 
+/** A trashed note/folder's record in NotesMeta.trash, keyed by its current (flat, uuid-prefixed)
+ * path under TRASH_DIR - see deleteNote/deleteFolder. */
+interface TrashMetaEntry {
+  /** Where this item lived before being trashed - used to restore it and to derive its
+   * display title, so nothing about it needs to be kept in sync separately. */
+  originalPath: string;
+  deletedAt: number;
+  type: "note" | "folder";
+}
+
 interface NotesMeta {
   /** Maps a folder's relative path to a preset color name from FOLDER_COLORS */
   folderColors: Record<string, string>;
@@ -49,6 +63,12 @@ interface NotesMeta {
   /** Maps a note's relative path to its visual look (see NoteLook). Notes without
    * an entry here use the "plain" look. */
   noteLooks: Record<string, string>;
+  /** Set of starred note paths (value is always `true` - only presence matters). */
+  starred: Record<string, true>;
+  /** Trashed items, keyed by their current path under TRASH_DIR. Deliberately NOT touched by
+   * remapMetaPaths/dropMetaPaths (those operate on the other fields only) - trashing/restoring/
+   * purging manage this field directly, since a trash entry's key IS the rename target/source. */
+  trash: Record<string, TrashMetaEntry>;
 }
 
 async function readMeta(): Promise<NotesMeta> {
@@ -59,14 +79,31 @@ async function readMeta(): Promise<NotesMeta> {
       folderColors: parsed.folderColors ?? {},
       createdAt: parsed.createdAt ?? {},
       noteLooks: parsed.noteLooks ?? {},
+      starred: parsed.starred ?? {},
+      trash: parsed.trash ?? {},
     };
   } catch {
-    return { folderColors: {}, createdAt: {}, noteLooks: {} };
+    return { folderColors: {}, createdAt: {}, noteLooks: {}, starred: {}, trash: {} };
   }
 }
 
 function writeMeta(meta: NotesMeta): Promise<void> {
   return writeTextFile(fullPath(META_FILE), JSON.stringify(meta, null, 2), { baseDir: BASE_DIR });
+}
+
+// Serializes every readMeta()->mutate->writeMeta() sequence in this window, so two rapid calls
+// (e.g. quick double-clicks on a star toggle) can't race and silently clobber each other's write
+// - each call was already an independent, non-atomic read-modify-write round trip before this.
+// Scoped to this module instance only: it does NOT protect against two separate windows writing
+// meta at the same time (see App.tsx's multi-window notes) - that stays an accepted, unchanged risk.
+let metaQueue: Promise<unknown> = Promise.resolve();
+function withMetaLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = metaQueue.then(fn, fn);
+  metaQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 /** Reads the persisted search index cache, or null if it doesn't exist yet / is unreadable. */
@@ -109,30 +146,38 @@ function dropPathKeys<T>(map: Record<string, T>, path: string): Record<string, T
   return result;
 }
 
-/** Repoints any meta entries under `oldPath` to `newPath`, for renames/moves. */
+/** Repoints any meta entries under `oldPath` to `newPath`, for renames/moves. Leaves `trash`
+ * untouched - see its doc comment on NotesMeta. */
 function remapMetaPaths(meta: NotesMeta, oldPath: string, newPath: string): NotesMeta {
   return {
+    ...meta,
     folderColors: remapPathKeys(meta.folderColors, oldPath, newPath),
     createdAt: remapPathKeys(meta.createdAt, oldPath, newPath),
     noteLooks: remapPathKeys(meta.noteLooks, oldPath, newPath),
+    starred: remapPathKeys(meta.starred, oldPath, newPath),
   };
 }
 
-/** Drops any meta entries at or under `path`, for deletions. */
+/** Drops any meta entries at or under `path`, for permanent deletions. Leaves `trash`
+ * untouched - see its doc comment on NotesMeta. */
 function dropMetaPaths(meta: NotesMeta, path: string): NotesMeta {
   return {
+    ...meta,
     folderColors: dropPathKeys(meta.folderColors, path),
     createdAt: dropPathKeys(meta.createdAt, path),
     noteLooks: dropPathKeys(meta.noteLooks, path),
+    starred: dropPathKeys(meta.starred, path),
   };
 }
 
 /** Sets (or clears, when `color` is null) the preset color for the folder at `path`. */
 export async function setFolderColor(path: string, color: string | null): Promise<void> {
-  const meta = await readMeta();
-  if (color) meta.folderColors[path] = color;
-  else delete meta.folderColors[path];
-  await writeMeta(meta);
+  return withMetaLock(async () => {
+    const meta = await readMeta();
+    if (color) meta.folderColors[path] = color;
+    else delete meta.folderColors[path];
+    await writeMeta(meta);
+  });
 }
 
 /** Reads the visual look for the note at `path`, or "plain" if unset. */
@@ -143,10 +188,22 @@ export async function getNoteLook(path: string): Promise<NoteLook> {
 
 /** Sets (or clears, when `look` is "plain") the visual look for the note at `path`. */
 export async function setNoteLook(path: string, look: NoteLook): Promise<void> {
-  const meta = await readMeta();
-  if (look !== "plain") meta.noteLooks[path] = look;
-  else delete meta.noteLooks[path];
-  await writeMeta(meta);
+  return withMetaLock(async () => {
+    const meta = await readMeta();
+    if (look !== "plain") meta.noteLooks[path] = look;
+    else delete meta.noteLooks[path];
+    await writeMeta(meta);
+  });
+}
+
+/** Sets (or clears) whether the note at `path` is starred. */
+export async function setStarred(path: string, value: boolean): Promise<void> {
+  return withMetaLock(async () => {
+    const meta = await readMeta();
+    if (value) meta.starred[path] = true;
+    else delete meta.starred[path];
+    await writeMeta(meta);
+  });
 }
 
 function titleFromFileName(name: string): string {
@@ -198,9 +255,15 @@ async function buildTree(relDir: string, meta: NotesMeta): Promise<TreeEntry[]> 
   const entries = await readDir(fullPath(relDir), { baseDir: BASE_DIR });
   const relevant = entries.filter((entry) => {
     if (!entry.name || entry.name.startsWith(".")) return false;
-    if (relDir === "" && entry.name === ASSETS_DIR) return false;
+    if (relDir === "" && (entry.name === ASSETS_DIR || entry.name === TRASH_DIR)) return false;
     return entry.isDirectory || (entry.isFile && entry.name.endsWith(NOTE_EXTENSION));
   });
+
+  // Every sibling name in this directory (including sidecar files that `relevant` filters
+  // out), used below to derive hasStudyItems for free from data already fetched - see its
+  // comment inline. Cheaper than a separate exists()/readStudyItems() call per note, which
+  // would mean parsing every .study.json in the vault on every refreshTree().
+  const siblingNames = new Set(entries.map((e) => e.name).filter((n): n is string => Boolean(n)));
 
   // Subdirectories are read in parallel rather than one at a time: each
   // readDir is a Tauri IPC round-trip, and awaiting them sequentially made
@@ -227,6 +290,7 @@ async function buildTree(relDir: string, meta: NotesMeta): Promise<TreeEntry[]> 
         };
         return folder;
       }
+      const studySiblingName = entry.name.slice(0, -NOTE_EXTENSION.length) + STUDY_EXTENSION;
       const note: NoteEntry = {
         type: "note",
         path: relPath,
@@ -234,6 +298,8 @@ async function buildTree(relDir: string, meta: NotesMeta): Promise<TreeEntry[]> 
         parentPath: relDir,
         createdAt,
         modifiedAt,
+        starred: meta.starred[relPath],
+        hasStudyItems: siblingNames.has(studySiblingName),
       };
       return note;
     }),
@@ -263,6 +329,8 @@ export function flattenNotes(tree: TreeEntry[]): NoteSummary[] {
         parentPath: entry.parentPath,
         createdAt: entry.createdAt,
         modifiedAt: entry.modifiedAt,
+        starred: entry.starred,
+        hasStudyItems: entry.hasStudyItems,
       });
     } else {
       notes.push(...flattenNotes(entry.children));
@@ -289,18 +357,177 @@ export function writeNote(path: string, content: string): Promise<void> {
   return writeTextFile(fullPath(path), content, { baseDir: BASE_DIR });
 }
 
-export async function deleteNote(path: string): Promise<void> {
-  await remove(fullPath(path), { baseDir: BASE_DIR });
-  await deleteSketch(path);
-  await deleteStudyItems(path);
-  const meta = await readMeta();
-  await writeMeta(dropMetaPaths(meta, path));
+/** A flat, collision-proof name for a trashed item - not a mirror of its original nested
+ * path, so trashing the same original path twice (delete, recreate, delete again) can never
+ * clash inside trash/. Restore relies solely on the recorded originalPath, not this name. */
+function trashName(originalRelPath: string): string {
+  return `${crypto.randomUUID()}-${nameOf(originalRelPath)}`;
 }
 
+/** Soft-deletes the note at `path`: moves it (with its sketch/study sidecars intact) into
+ * trash/ instead of removing it, so it can be restored - see restoreFromTrash. Permanently
+ * removed only via deleteForever, or automatically after 30 days - see purgeExpiredTrash. */
+export async function deleteNote(path: string): Promise<void> {
+  return withMetaLock(async () => {
+    const trashPath = joinPath(TRASH_DIR, trashName(path));
+    await mkdir(fullPath(TRASH_DIR), { baseDir: BASE_DIR, recursive: true });
+    await rename(fullPath(path), fullPath(trashPath), {
+      oldPathBaseDir: BASE_DIR,
+      newPathBaseDir: BASE_DIR,
+    });
+    await relocateSketch(path, trashPath);
+    await relocateStudyItems(path, trashPath);
+
+    const meta = await readMeta();
+    const next = remapMetaPaths(meta, path, trashPath);
+    next.trash[trashPath] = { originalPath: path, deletedAt: Date.now(), type: "note" };
+    await writeMeta(next);
+  });
+}
+
+/** Soft-deletes the folder at `path` and everything inside it - see deleteNote. A folder's
+ * sidecars move for free since the whole subtree relocates in one rename() call. */
 export async function deleteFolder(path: string): Promise<void> {
-  await remove(fullPath(path), { baseDir: BASE_DIR, recursive: true });
+  return withMetaLock(async () => {
+    const trashPath = joinPath(TRASH_DIR, trashName(path));
+    await mkdir(fullPath(TRASH_DIR), { baseDir: BASE_DIR, recursive: true });
+    await rename(fullPath(path), fullPath(trashPath), {
+      oldPathBaseDir: BASE_DIR,
+      newPathBaseDir: BASE_DIR,
+    });
+
+    const meta = await readMeta();
+    const next = remapMetaPaths(meta, path, trashPath);
+    next.trash[trashPath] = { originalPath: path, deletedAt: Date.now(), type: "folder" };
+    await writeMeta(next);
+  });
+}
+
+/** An item currently sitting in Recently Deleted, ready to display. */
+export interface TrashItem {
+  /** Its current path under trash/ - pass this to restoreFromTrash/deleteForever. */
+  trashPath: string;
+  originalPath: string;
+  type: "note" | "folder";
+  title: string;
+  deletedAt: number;
+}
+
+/** Lists everything in Recently Deleted, most recently deleted first. Reads only the meta
+ * file - trash contents are never walked directly. */
+export async function listTrash(): Promise<TrashItem[]> {
   const meta = await readMeta();
-  await writeMeta(dropMetaPaths(meta, path));
+  return Object.entries(meta.trash)
+    .map(([trashPath, entry]) => ({
+      trashPath,
+      originalPath: entry.originalPath,
+      type: entry.type,
+      title: entry.type === "note" ? titleFromNotePath(entry.originalPath) : nameOf(entry.originalPath),
+      deletedAt: entry.deletedAt,
+    }))
+    .sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+export interface RestoreResult {
+  /** Where the item actually ended up - may differ from its original path if that name is
+   * now taken (deduped, same as create) or its parent folder no longer exists (see below). */
+  path: string;
+  /** True if the original parent folder was gone (deleted/moved/itself still trashed), so
+   * this was restored to the vault root instead - callers should surface this in a toast. */
+  restoredToRoot: boolean;
+}
+
+/** Restores a trashed note or folder back out of Recently Deleted. */
+export async function restoreFromTrash(trashPath: string): Promise<RestoreResult> {
+  return withMetaLock(async () => {
+    const meta = await readMeta();
+    const record = meta.trash[trashPath];
+    if (!record) throw new Error("This item is no longer in Recently Deleted");
+    const { originalPath, type } = record;
+
+    let targetParent = parentOf(originalPath);
+    const restoredToRoot = targetParent !== "" && !(await exists(fullPath(targetParent), { baseDir: BASE_DIR }));
+    if (restoredToRoot) targetParent = "";
+
+    const desiredName = nameOf(originalPath);
+    let finalPath: string;
+    if (type === "folder") {
+      const name = await uniqueName(targetParent, desiredName, "");
+      finalPath = joinPath(targetParent, name);
+    } else {
+      const title = await uniqueNoteTitle(titleFromFileName(desiredName));
+      finalPath = joinPath(targetParent, `${title}${NOTE_EXTENSION}`);
+    }
+
+    await rename(fullPath(trashPath), fullPath(finalPath), {
+      oldPathBaseDir: BASE_DIR,
+      newPathBaseDir: BASE_DIR,
+    });
+
+    const next = remapMetaPaths(meta, trashPath, finalPath);
+    delete next.trash[trashPath];
+    await writeMeta(next);
+
+    if (type === "note") {
+      await relocateSketch(trashPath, finalPath);
+      await relocateStudyItems(trashPath, finalPath);
+    }
+
+    return { path: finalPath, restoredToRoot };
+  });
+}
+
+/** Permanently removes a trashed note or folder - this is the one truly irreversible action. */
+export async function deleteForever(trashPath: string, type: "note" | "folder"): Promise<void> {
+  return withMetaLock(async () => {
+    if (type === "folder") {
+      await remove(fullPath(trashPath), { baseDir: BASE_DIR, recursive: true });
+    } else {
+      await remove(fullPath(trashPath), { baseDir: BASE_DIR });
+      await deleteSketch(trashPath);
+      await deleteStudyItems(trashPath);
+    }
+    const meta = await readMeta();
+    // dropMetaPaths cleans up the color/createdAt/noteLook/starred entries that were
+    // *remapped* (not dropped) to this trash-relative key when the item was trashed -
+    // skipping this would leak them forever, keyed to a path that no longer exists.
+    const next = dropMetaPaths(meta, trashPath);
+    delete next.trash[trashPath];
+    await writeMeta(next);
+  });
+}
+
+const TRASH_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Permanently removes anything that's been in Recently Deleted longer than `maxAgeMs`
+ * (default 30 days). Meant to run once at boot - see App.tsx. Returns how many were purged. */
+export async function purgeExpiredTrash(maxAgeMs: number = TRASH_MAX_AGE_MS): Promise<number> {
+  return withMetaLock(async () => {
+    const meta = await readMeta();
+    const cutoff = Date.now() - maxAgeMs;
+    const expired = Object.entries(meta.trash).filter(([, entry]) => entry.deletedAt < cutoff);
+    if (expired.length === 0) return 0;
+
+    for (const [trashPath, entry] of expired) {
+      try {
+        if (entry.type === "folder") {
+          await remove(fullPath(trashPath), { baseDir: BASE_DIR, recursive: true });
+        } else {
+          await remove(fullPath(trashPath), { baseDir: BASE_DIR });
+          await deleteSketch(trashPath);
+          await deleteStudyItems(trashPath);
+        }
+      } catch {
+        // Already gone from disk somehow - still drop its meta entry below.
+      }
+    }
+
+    let next = meta;
+    for (const [trashPath] of expired) next = dropMetaPaths(next, trashPath);
+    for (const [trashPath] of expired) delete next.trash[trashPath];
+    await writeMeta(next);
+    return expired.length;
+  });
 }
 
 async function uniqueName(parentPath: string, base: string, ext: string): Promise<string> {
@@ -331,6 +558,20 @@ async function allNoteTitles(excludePath?: string): Promise<Set<string>> {
   return titles;
 }
 
+/** Finds a unique note title (unique across the whole vault, matching how notes are already
+ * addressed by title alone in tabs/search) by appending " 2", " 3", etc. if `base` is taken -
+ * shared by createNote and restoreFromTrash. */
+async function uniqueNoteTitle(base: string, excludePath?: string): Promise<string> {
+  const taken = await allNoteTitles(excludePath);
+  let title = base;
+  let suffix = 2;
+  while (taken.has(title)) {
+    title = `${base} ${suffix}`;
+    suffix += 1;
+  }
+  return title;
+}
+
 /** Creates a new note with a unique name (unique across the whole vault) inside `parentPath`. */
 export async function createNote(
   parentPath: string,
@@ -338,25 +579,18 @@ export async function createNote(
   content: string = STARTER_CONTENT,
   look: NoteLook = "plain",
 ): Promise<NoteSummary> {
-  const taken = await allNoteTitles();
-  const base = desiredTitle?.trim() || "Untitled";
-  let title = base;
-  let suffix = 2;
-  while (taken.has(title)) {
-    title = `${base} ${suffix}`;
-    suffix += 1;
-  }
+  return withMetaLock(async () => {
+    const title = await uniqueNoteTitle(desiredTitle?.trim() || "Untitled");
+    const relPath = joinPath(parentPath, `${title}${NOTE_EXTENSION}`);
+    await writeNote(relPath, content);
 
-  const name = `${title}${NOTE_EXTENSION}`;
-  const relPath = joinPath(parentPath, name);
-  await writeNote(relPath, content);
+    const meta = await readMeta();
+    meta.createdAt[relPath] = Date.now();
+    if (look !== "plain") meta.noteLooks[relPath] = look;
+    await writeMeta(meta);
 
-  const meta = await readMeta();
-  meta.createdAt[relPath] = Date.now();
-  if (look !== "plain") meta.noteLooks[relPath] = look;
-  await writeMeta(meta);
-
-  return { path: relPath, title, parentPath };
+    return { path: relPath, title, parentPath };
+  });
 }
 
 /** Creates a new folder with a unique name inside `parentPath`, optionally with a preset color. */
@@ -365,17 +599,19 @@ export async function createFolder(
   desiredName?: string,
   color?: string | null,
 ): Promise<string> {
-  const base = desiredName?.trim() || "New Folder";
-  const name = await uniqueName(parentPath, base, "");
-  const relPath = joinPath(parentPath, name);
-  await mkdir(fullPath(relPath), { baseDir: BASE_DIR, recursive: true });
+  return withMetaLock(async () => {
+    const base = desiredName?.trim() || "New Folder";
+    const name = await uniqueName(parentPath, base, "");
+    const relPath = joinPath(parentPath, name);
+    await mkdir(fullPath(relPath), { baseDir: BASE_DIR, recursive: true });
 
-  const meta = await readMeta();
-  meta.createdAt[relPath] = Date.now();
-  if (color) meta.folderColors[relPath] = color;
-  await writeMeta(meta);
+    const meta = await readMeta();
+    meta.createdAt[relPath] = Date.now();
+    if (color) meta.folderColors[relPath] = color;
+    await writeMeta(meta);
 
-  return relPath;
+    return relPath;
+  });
 }
 
 /** Renames a note or folder in place, keeping it in the same parent folder. */
@@ -384,68 +620,72 @@ export async function renameEntry(
   newTitle: string,
   isFolder: boolean,
 ): Promise<string> {
-  const trimmed = newTitle.trim();
-  if (!trimmed) throw new Error("Name cannot be empty");
+  return withMetaLock(async () => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) throw new Error("Name cannot be empty");
 
-  const parent = parentOf(path);
-  const newName = isFolder ? trimmed : `${trimmed}${NOTE_EXTENSION}`;
-  const newPath = joinPath(parent, newName);
-  if (newPath === path) return path;
+    const parent = parentOf(path);
+    const newName = isFolder ? trimmed : `${trimmed}${NOTE_EXTENSION}`;
+    const newPath = joinPath(parent, newName);
+    if (newPath === path) return path;
 
-  if (isFolder) {
-    const clash = await exists(fullPath(newPath), { baseDir: BASE_DIR });
-    if (clash) throw new Error(`"${trimmed}" already exists here`);
-  } else {
-    const taken = await allNoteTitles(path);
-    if (taken.has(trimmed)) throw new Error(`A note named "${trimmed}" already exists`);
-  }
+    if (isFolder) {
+      const clash = await exists(fullPath(newPath), { baseDir: BASE_DIR });
+      if (clash) throw new Error(`"${trimmed}" already exists here`);
+    } else {
+      const taken = await allNoteTitles(path);
+      if (taken.has(trimmed)) throw new Error(`A note named "${trimmed}" already exists`);
+    }
 
-  await rename(fullPath(path), fullPath(newPath), {
-    oldPathBaseDir: BASE_DIR,
-    newPathBaseDir: BASE_DIR,
+    await rename(fullPath(path), fullPath(newPath), {
+      oldPathBaseDir: BASE_DIR,
+      newPathBaseDir: BASE_DIR,
+    });
+
+    const meta = await readMeta();
+    await writeMeta(remapMetaPaths(meta, path, newPath));
+    if (!isFolder) {
+      await relocateSketch(path, newPath);
+      await relocateStudyItems(path, newPath);
+    }
+
+    return newPath;
   });
-
-  const meta = await readMeta();
-  await writeMeta(remapMetaPaths(meta, path, newPath));
-  if (!isFolder) {
-    await relocateSketch(path, newPath);
-    await relocateStudyItems(path, newPath);
-  }
-
-  return newPath;
 }
 
 /** Moves a note or folder to live under `targetParentPath`. */
 export async function moveEntry(path: string, targetParentPath: string): Promise<string> {
-  const name = nameOf(path);
-  const newPath = joinPath(targetParentPath, name);
-  if (newPath === path) return path;
-  if (targetParentPath === path || targetParentPath.startsWith(`${path}/`)) {
-    throw new Error("Can't move a folder into itself");
-  }
+  return withMetaLock(async () => {
+    const name = nameOf(path);
+    const newPath = joinPath(targetParentPath, name);
+    if (newPath === path) return path;
+    if (targetParentPath === path || targetParentPath.startsWith(`${path}/`)) {
+      throw new Error("Can't move a folder into itself");
+    }
 
-  if (path.endsWith(NOTE_EXTENSION)) {
-    const title = titleFromFileName(name);
-    const taken = await allNoteTitles(path);
-    if (taken.has(title)) throw new Error(`A note named "${title}" already exists`);
-  } else {
-    const clash = await exists(fullPath(newPath), { baseDir: BASE_DIR });
-    if (clash) throw new Error(`"${name}" already exists in that folder`);
-  }
+    if (path.endsWith(NOTE_EXTENSION)) {
+      const title = titleFromFileName(name);
+      const taken = await allNoteTitles(path);
+      if (taken.has(title)) throw new Error(`A note named "${title}" already exists`);
+    } else {
+      const clash = await exists(fullPath(newPath), { baseDir: BASE_DIR });
+      if (clash) throw new Error(`"${name}" already exists in that folder`);
+    }
 
-  await rename(fullPath(path), fullPath(newPath), {
-    oldPathBaseDir: BASE_DIR,
-    newPathBaseDir: BASE_DIR,
+    await rename(fullPath(path), fullPath(newPath), {
+      oldPathBaseDir: BASE_DIR,
+      newPathBaseDir: BASE_DIR,
+    });
+
+    const meta = await readMeta();
+    await writeMeta(remapMetaPaths(meta, path, newPath));
+    if (path.endsWith(NOTE_EXTENSION)) {
+      await relocateSketch(path, newPath);
+      await relocateStudyItems(path, newPath);
+    }
+
+    return newPath;
   });
-
-  const meta = await readMeta();
-  await writeMeta(remapMetaPaths(meta, path, newPath));
-  if (path.endsWith(NOTE_EXTENSION)) {
-    await relocateSketch(path, newPath);
-    await relocateStudyItems(path, newPath);
-  }
-
-  return newPath;
 }
 
 /** Moves a note's ink sidecar (if any) alongside a rename/move of the note itself. */

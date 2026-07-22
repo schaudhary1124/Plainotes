@@ -1,20 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { FOLDER_COLORS } from "./NotesBrowser";
-import { NOTE_TEMPLATES } from "../utils/templates";
+import { FOLDER_COLORS } from "../utils/folderColors";
 
 interface NewItemDialogProps {
   kind: "note" | "folder";
   defaultName: string;
-  onCreate: (name: string, color: string | null, templateId: string) => void;
+  onCreate: (name: string, color: string | null) => void;
   onCancel: () => void;
 }
 
 export function NewItemDialog({ kind, defaultName, onCreate, onCancel }: NewItemDialogProps) {
   const [name, setName] = useState(defaultName);
-  const [nameTouched, setNameTouched] = useState(false);
   const [color, setColor] = useState<string | null>(null);
-  const [templateId, setTemplateId] = useState(NOTE_TEMPLATES[0].id);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -23,15 +20,7 @@ export function NewItemDialog({ kind, defaultName, onCreate, onCancel }: NewItem
   }, []);
 
   function handleCreate() {
-    onCreate(name.trim() || defaultName, color, templateId);
-  }
-
-  function handleSelectTemplate(id: string) {
-    setTemplateId(id);
-    if (nameTouched) return;
-    const template = NOTE_TEMPLATES.find((t) => t.id === id);
-    if (template && template.id !== "blank") setName(template.label);
-    else setName(defaultName);
+    onCreate(name.trim() || defaultName, color);
   }
 
   return (
@@ -52,10 +41,7 @@ export function NewItemDialog({ kind, defaultName, onCreate, onCancel }: NewItem
         <input
           ref={inputRef}
           value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            setNameTouched(true);
-          }}
+          onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleCreate();
             if (e.key === "Escape") onCancel();
@@ -63,30 +49,6 @@ export function NewItemDialog({ kind, defaultName, onCreate, onCancel }: NewItem
           className="border-subtle bg-surface-hover text-primary mt-4 h-9 w-full rounded-lg border px-3 text-sm focus:outline-none"
           placeholder={defaultName}
         />
-
-        {kind === "note" && (
-          <div className="mt-4 grid grid-cols-3 gap-1.5">
-            {NOTE_TEMPLATES.map((template) => {
-              const selected = templateId === template.id;
-              return (
-                <button
-                  key={template.id}
-                  type="button"
-                  onClick={() => handleSelectTemplate(template.id)}
-                  aria-pressed={selected}
-                  className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition-colors duration-150 ${
-                    selected
-                      ? "border-accent-soft bg-accent-soft text-accent"
-                      : "border-subtle text-secondary hover:bg-surface-hover"
-                  }`}
-                >
-                  <template.icon size={16} />
-                  <span className="text-xs font-medium leading-tight">{template.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {kind === "folder" && (
           <div className="mt-4 flex flex-wrap gap-1.5">

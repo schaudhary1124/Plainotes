@@ -2,9 +2,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emitTo, once } from "@tauri-apps/api/event";
 
-/** Query param keys used to tell a freshly opened window what to show. */
+/** Query param key used to tell a freshly opened window which note to show. */
 const NOTE_QUERY_PARAM = "note";
-const FOLDER_QUERY_PARAM = "folder";
 /** Marks a window as spawned mid tab-drag, so its boot sequence knows to wait
  * for a `DETACH_INIT_EVENT` handoff instead of reading the note straight off disk. */
 const DETACHED_QUERY_PARAM = "detached";
@@ -13,22 +12,19 @@ const DEFAULT_WIDTH = 1180;
 const DEFAULT_HEIGHT = 760;
 
 interface LocationTarget {
-  /** Note path to open directly into, if this window was spawned to show a specific note. */
+  /** Note path to open directly into, if this window was spawned to show a specific note - null
+   * means it should just boot to Home, like the main window does. */
   notePath: string | null;
-  /** Folder to browse into, if this window was spawned to mirror the browse view. Undefined if unset. */
-  browseFolder: string | undefined;
   /** True if this window was spawned by dragging a tab out - see DETACH_INIT_EVENT. */
   detached: boolean;
 }
 
-/** Reads which note/folder a window should open to, from its own URL (set by openWindowInstance). */
+/** Reads which note a window should open to, from its own URL (set by openWindowInstance). */
 export function getTargetFromLocation(): LocationTarget {
   const params = new URLSearchParams(window.location.search);
   const note = params.get(NOTE_QUERY_PARAM);
-  const folder = params.get(FOLDER_QUERY_PARAM);
   return {
     notePath: note ? decodeURIComponent(note) : null,
-    browseFolder: folder !== null ? decodeURIComponent(folder) : undefined,
     detached: params.get(DETACHED_QUERY_PARAM) === "1",
   };
 }
@@ -46,20 +42,17 @@ async function logicalSizeOfCurrentWindow(): Promise<{ width: number; height: nu
 }
 
 /**
- * Opens a new PlaiNotes window mirroring this one - either straight into a specific note, or
- * into the folder currently being browsed - sized to match the current window.
+ * Opens a new PlaiNotes window, sized to match the current window - straight into a specific
+ * note if given one, or to Home otherwise (mirrors how the main window itself boots).
  */
-export async function openWindowInstance(target: { notePath: string } | { browseFolder: string }): Promise<void> {
-  const query =
-    "notePath" in target
-      ? `${NOTE_QUERY_PARAM}=${encodeURIComponent(target.notePath)}`
-      : `${FOLDER_QUERY_PARAM}=${encodeURIComponent(target.browseFolder)}`;
+export async function openWindowInstance(target?: { notePath: string }): Promise<void> {
+  const query = target?.notePath ? `?${NOTE_QUERY_PARAM}=${encodeURIComponent(target.notePath)}` : "";
 
   const { width, height } = await logicalSizeOfCurrentWindow();
 
   const label = `note-${crypto.randomUUID()}`;
   new WebviewWindow(label, {
-    url: `index.html?${query}`,
+    url: `index.html${query}`,
     title: "PlaiNotes",
     width,
     height,

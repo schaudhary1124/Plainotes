@@ -9,6 +9,10 @@ export interface NoteSummary {
   createdAt?: number;
   /** Epoch ms when the note was last modified, if known */
   modifiedAt?: number;
+  /** Whether this note is in the user's Starred list - see fsNotes.ts's `starred` meta entry. */
+  starred?: boolean;
+  /** Whether this note has any flashcards/MCQs - see NoteEntry's field of the same name. */
+  hasStudyItems?: boolean;
 }
 
 export interface FolderEntry {
@@ -35,9 +39,18 @@ export interface NoteEntry {
   createdAt?: number;
   /** Epoch ms when the note was last modified, if known */
   modifiedAt?: number;
+  /** Whether this note is in the user's Starred list - see fsNotes.ts's `starred` meta entry. */
+  starred?: boolean;
+  /** Whether this note has any flashcards/MCQs - cheaply derived during buildTree
+   * from the directory listing, not a count (see fsNotes.ts). */
+  hasStudyItems?: boolean;
 }
 
 export type TreeEntry = FolderEntry | NoteEntry;
+
+/** Which slice of the vault the sidebar's nav (All Notes/Starred/Recently Deleted) tells
+ * Home's middle content to show - see App.tsx's `browseFilter` state. */
+export type BrowseFilter = "all" | "starred" | "trash";
 
 export type AppMode = "edit" | "study";
 
@@ -71,13 +84,10 @@ export type BackgroundStyle = "flat" | "soft" | "glass";
  * `noteLooks` meta entry for persistence. */
 export type NoteLook = "plain" | "paper" | "grid" | "index-card";
 
-export type NotesViewMode = "grid" | "list";
-
 export interface AppSettings {
   theme: ThemeName;
   accent: string;
   background: BackgroundStyle;
-  notesViewMode: NotesViewMode;
   toolbarCollapsed: boolean;
 }
 

@@ -901,17 +901,233 @@ input,
 
 /* Images */
 .milkdown-image-view {
+  position: relative;
   display: inline-block;
   max-width: 100%;
   margin: 0.4em 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
-.milkdown-image-view img {
+/* Unsized (never resized/cropped): the frame is a transparent pass-through
+   and `img` keeps the simple natural-flow sizing it always had. Once resized
+   or cropped, `.sized` takes over - see imageView.ts's `layoutFrame`, which
+   is also what keeps this the *only* place both states are described. */
+.image-frame {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
+  vertical-align: top;
+}
+.image-frame img {
   max-width: 100%;
   border-radius: 10px;
   border: 1px solid var(--border);
   display: block;
+  transition:
+    width 0.12s ease,
+    height 0.12s ease;
 }
-.milkdown-image-view.selected img {
+.image-frame.sized {
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.image-frame.sized img {
+  position: absolute;
+  max-width: none;
+  border: none;
+  border-radius: 0;
+}
+/* Crop preview temporarily expands the frame back out to the image's full
+   uncropped extent (see `enterCropMode`) - the scrim, not `overflow`, is
+   what visually distinguishes kept from trimmed while it's active. */
+.image-frame.crop-preview {
+  overflow: visible;
+}
+.milkdown-image-view.selected .image-frame {
   outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+}
+.milkdown-image-view.cropping .image-frame {
+  outline: none;
+}
+/* Dragging tracks the pointer 1:1 - a transition here would make the edge
+   lag behind the cursor instead of resizing smoothly with it. */
+.milkdown-image-view.resizing .image-frame img,
+.image-frame.crop-preview img {
+  transition: none;
+}
+
+.image-resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgb(var(--accent-rgb));
+  box-shadow:
+    0 0 0 2px var(--app-bg),
+    0 1px 3px rgb(0 0 0 / 0.3);
+  opacity: 0;
+  --handle-pos: translate(0, 0);
+  --handle-scale: 0.6;
+  transform: var(--handle-pos) scale(var(--handle-scale));
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  touch-action: none;
+  /* Invisible (opacity: 0) still hit-tests by default, which would dead-zone
+     the image's edge pixels for plain clicks before it's ever been hovered
+     or selected - only take pointer events once actually shown. */
+  pointer-events: none;
+}
+.image-resize-handle-nw {
+  left: -6px;
+  top: -6px;
+}
+.image-resize-handle-n {
+  left: 50%;
+  top: -6px;
+  --handle-pos: translateX(-50%);
+}
+.image-resize-handle-ne {
+  right: -6px;
+  top: -6px;
+}
+.image-resize-handle-e {
+  right: -6px;
+  top: 50%;
+  --handle-pos: translateY(-50%);
+}
+.image-resize-handle-se {
+  right: -6px;
+  bottom: -6px;
+}
+.image-resize-handle-s {
+  left: 50%;
+  bottom: -6px;
+  --handle-pos: translateX(-50%);
+}
+.image-resize-handle-sw {
+  left: -6px;
+  bottom: -6px;
+}
+.image-resize-handle-w {
+  left: -6px;
+  top: 50%;
+  --handle-pos: translateY(-50%);
+}
+.milkdown-image-view.selected .image-resize-handle,
+.milkdown-image-view:hover .image-resize-handle {
+  opacity: 1;
+  --handle-scale: 1;
+  pointer-events: auto;
+}
+.milkdown-image-view.resizing .image-resize-handle {
+  opacity: 1;
+  --handle-scale: 1.15;
+}
+.milkdown-image-view.cropping .image-resize-handle {
+  display: none;
+}
+
+/* Crop: a scrim dims the parts of the full image that fall outside the
+   current crop rect, a thin outline marks the rect itself, and a dedicated
+   set of (square, distinct from the round resize handles) handles sit on
+   its corners/edges - all positioned in imageView.ts's `renderCropOverlay`,
+   which is also the only place that needs to know the crop math. */
+.image-crop-scrim {
+  display: none;
+  position: absolute;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.image-crop-scrim-top {
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.image-crop-scrim-bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+.image-crop-scrim-left {
+  left: 0;
+}
+.image-crop-scrim-right {
+  right: 0;
+}
+.image-crop-outline {
+  display: none;
+  position: absolute;
+  border: 1.5px solid rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.milkdown-image-view.cropping .image-crop-scrim,
+.milkdown-image-view.cropping .image-crop-outline {
+  display: block;
+}
+.image-crop-handle {
+  display: none;
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
+  border-radius: 3px;
+  background: rgb(var(--accent-rgb));
+  box-shadow:
+    0 0 0 2px var(--app-bg),
+    0 1px 3px rgb(0 0 0 / 0.3);
+  touch-action: none;
+}
+.milkdown-image-view.cropping .image-crop-handle {
+  display: block;
+}
+
+/* Text wrapping modes - the paragraph containing the image (`.prose-note`'s
+   `<Milkdown />` root) must be the nearest positioned ancestor for
+   data-wrap="above" so its "static position" fallback (no top/left set)
+   lands at the image's typed position instead of the page origin -
+   Editor.tsx already wraps it in a `position: relative` div for the sketch
+   layer, so no extra markup is needed here. */
+.milkdown-image-view[data-wrap="wrap"] {
+  float: left;
+  margin: 0.2em 1em 0.4em 0;
+}
+.milkdown-image-view[data-wrap="break"] {
+  /* `display: block` alone would stretch to fill the column's full width
+     (a block box with no explicit width fills its container), which is what
+     the resize/crop handles - absolutely positioned against *this* element,
+     not the inner `.image-frame` - were anchoring to instead of the image's
+     own edges. `width: fit-content` keeps the shrink-to-fit sizing the base
+     `inline-block` had while still being a block box that clears floats. */
+  display: block;
+  width: fit-content;
+  float: none;
+  clear: both;
+  margin: 0.6em 0;
+}
+.milkdown-image-view[data-wrap="above"] {
+  /* No `top`/`left` here on purpose: unset, `position: absolute` falls back
+     to the "static position" (wherever normal flow would have placed it),
+     which is what makes a never-dragged "above" image render at its typed
+     location. Once dragged, imageView.ts sets `top`/`left` as inline style
+     (see `applyPosition`) - inline style naturally wins over this rule
+     having none, no extra specificity needed. */
+  position: absolute;
+  margin: 0;
+  z-index: 1;
+}
+.milkdown-image-view[data-wrap="above"].selected .image-frame {
+  cursor: grab;
+}
+.milkdown-image-view[data-wrap="above"].dragging-position .image-frame {
+  cursor: grabbing;
+}
+/* A drag in progress tracks the pointer 1:1, same reasoning as the
+   resize/crop transitions above. */
+.milkdown-image-view.dragging-position .image-frame img {
+  transition: none;
 }
 

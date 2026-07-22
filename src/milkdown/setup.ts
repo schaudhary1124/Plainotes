@@ -16,6 +16,8 @@ import { getBlockAlign, getTableCellAlign } from "./alignmentCommands";
 import { alignmentSidecarRemark, configureAlignmentSchemas, type BlockAlign } from "./alignmentSchemaExtensions";
 import { codeBlockExtensions, codeBlockLanguages } from "./codeBlock";
 import { codeBlockGrips } from "./codeBlockGrips";
+import { getSelectedImageWrap } from "./imageCommands";
+import { imageSchemaExt, imageWrapSidecarRemark, type ImageWrap } from "./imageSchemaExtensions";
 import { imageView } from "./imageView";
 import { getListState, type ListState } from "./listCommands";
 import { taskListToggle } from "./taskListToggle";
@@ -38,6 +40,7 @@ export interface EditorSelectionState {
   inTable: boolean;
   align: BlockAlign;
   cellAlign: BlockAlign;
+  imageWrap: ImageWrap | null;
 }
 
 function isMarkActive(state: EditorState, type: MarkType): boolean {
@@ -67,6 +70,7 @@ export function getSelectionState(ctx: Ctx): EditorSelectionState {
     inTable: isInTable(state),
     align: getBlockAlign(ctx),
     cellAlign: getTableCellAlign(ctx),
+    imageWrap: getSelectedImageWrap(ctx),
   };
 }
 
@@ -146,6 +150,13 @@ export function registerMilkdownPlugins(
     // is applied eagerly in .config() above, not here - see
     // configureAlignmentSchemas.)
     .use(alignmentSidecarRemark)
+    // Overrides commonmark's `image` node schema with the `wrap` attr - safe
+    // to `.use()` under the existing "image" id (see imageSchemaExt's own
+    // comment for why, unlike paragraph/heading above).
+    .use(imageSchemaExt)
+    // Needs commonmark's inline-html parsing already settled, same ordering
+    // requirement as the sidecar plugins above.
+    .use(imageWrapSidecarRemark)
     // Same ordering requirement as tableSidecarRemark: needs commonmark's
     // remarkHtmlTransformer and gfm's own remark plugins to have already run
     // so raw `<mark>`/`<u>` HTML nodes are in their final flat shape.

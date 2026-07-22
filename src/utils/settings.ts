@@ -6,7 +6,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "light",
   accent: "indigo",
   background: "soft",
-  notesViewMode: "grid",
   toolbarCollapsed: false,
 };
 

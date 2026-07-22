@@ -2,8 +2,8 @@ import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
-  Brush,
   Copy,
+  Menu,
   Minus,
   PanelTopClose,
   PanelTopOpen,
@@ -17,20 +17,19 @@ import { ModeToggle } from "./ModeToggle";
 import type { AppMode } from "../types";
 
 interface HeaderProps {
-  view: "browse" | "note";
+  view: "home" | "note";
   onBack: () => void;
   mode: AppMode;
   onModeChange: (mode: AppMode) => void;
-  sketchMode: boolean;
-  onToggleSketchMode: () => void;
   onDuplicateWindow: () => void;
   settingsOpen: boolean;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
   toolbarVisible: boolean;
   onToggleToolbar: () => void;
-  showFolderBack: boolean;
-  onNavigateUp: () => void;
+  /** Opens the sidebar - only rendered once the app is narrow enough for the sidebar to have
+   * become an overlay (see Sidebar.tsx's own @max-2xl: classes, which this button matches). */
+  onToggleSidebar: () => void;
   /** The open-tabs strip, rendered left-aligned next to the back button. */
   tabStrip?: React.ReactNode;
 }
@@ -42,16 +41,13 @@ export function Header({
   onBack,
   mode,
   onModeChange,
-  sketchMode,
-  onToggleSketchMode,
   onDuplicateWindow,
   settingsOpen,
   onOpenSettings,
   onCloseSettings,
   toolbarVisible,
   onToggleToolbar,
-  showFolderBack,
-  onNavigateUp,
+  onToggleSidebar,
   tabStrip,
 }: HeaderProps) {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
@@ -82,28 +78,25 @@ export function Header({
           </button>
         ) : (
           <>
-            {view === "note" ? (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="btn-ghost hidden h-6 w-6 shrink-0 @max-2xl:flex"
+              title="Toggle sidebar"
+              aria-label="Toggle sidebar"
+            >
+              <Menu size={15} />
+            </button>
+            {view === "note" && (
               <button
                 type="button"
                 onClick={onBack}
                 className="btn-ghost h-6 w-6 shrink-0"
-                title="Back to notes"
-                aria-label="Back to notes"
+                title="Back to Home"
+                aria-label="Back to Home"
               >
                 <ArrowLeft size={15} />
               </button>
-            ) : (
-              showFolderBack && (
-                <button
-                  type="button"
-                  onClick={onNavigateUp}
-                  className="btn-ghost h-6 w-6 shrink-0"
-                  title="Back"
-                  aria-label="Back to parent folder"
-                >
-                  <ArrowLeft size={15} />
-                </button>
-              )
             )}
             {tabStrip}
           </>
@@ -114,20 +107,6 @@ export function Header({
         {!settingsOpen && (
           <>
             {view === "note" && <ModeToggle mode={mode} onChange={onModeChange} />}
-            {view === "note" && (
-              <button
-                type="button"
-                onClick={onToggleSketchMode}
-                disabled={noteToolsDisabled}
-                aria-disabled={noteToolsDisabled}
-                className={`btn-ghost h-6 w-6 ${sketchMode ? "bg-accent-soft text-accent" : ""} ${noteToolsDisabled ? "cursor-not-allowed opacity-50" : ""}`}
-                title={noteToolsDisabled ? "Sketch on this note (edit mode only)" : sketchMode ? "Exit sketch mode" : "Sketch on this note"}
-                aria-pressed={sketchMode}
-                aria-label="Toggle sketch mode"
-              >
-                <Brush size={15} />
-              </button>
-            )}
             <button
               type="button"
               onClick={onOpenSettings}

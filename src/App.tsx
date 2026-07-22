@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Header } from "./components/Header";
-import { NotesBrowser } from "./components/NotesBrowser";
+import { Sidebar } from "./components/Sidebar";
+import { Home } from "./components/Home";
 import { Editor } from "./components/Editor";
 import { StudyView } from "./components/StudyView";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -15,16 +16,22 @@ import {
   createFolder,
   createNote,
   deleteFolder,
+  deleteForever,
   deleteNote,
   ensureNotesDir,
   flattenNotes,
   listNoteTree,
+  listTrash,
   migrateLegacyStudyItems,
   moveEntry,
+  purgeExpiredTrash,
   readNote,
   renameEntry,
+  restoreFromTrash,
   setFolderColor,
+  setStarred,
   writeNote,
+  type TrashItem,
 } from "./utils/fsNotes";
 import { getTemplate } from "./utils/templates";
 import { applySettingsToDocument, loadSettings, saveSettings } from "./utils/settings";
@@ -45,13 +52,16 @@ import {
   syncSearchIndex,
   updateNoteInIndex,
 } from "./utils/searchIndex";
-import type { AppMode, AppSettings, TreeEntry } from "./types";
+import type { AppMode, AppSettings, BrowseFilter, TreeEntry } from "./types";
 
 type BootStatus = "loading" | "ready" | "error";
 
-type ConfirmAction =
-  | { kind: "delete-note"; path: string; title: string }
-  | { kind: "delete-folder"; path: string; title: string };
+/** Recently Deleted's "Delete forever" is the only remaining destructive action that still
+ * needs confirmation - normal delete is instant now that Recently Deleted is the undo path.
+ * Holds one or more items so a multi-select "Remove" confirms/deletes them together. */
+interface ConfirmAction {
+  items: { trashPath: string; type: "note" | "folder"; title: string }[];
+}
 
 type NewItemDialogState = { kind: "note" | "folder"; parentPath: string };
 
@@ -99,12 +109,15 @@ function App() {
   const [bootStatus, setBootStatus] = useState<BootStatus>("loading");
   const [bootError, setBootError] = useState<string | null>(null);
   const [tree, setTree] = useState<TreeEntry[]>([]);
+  const [trash, setTrash] = useState<TrashItem[]>([]);
   const [tabs, setTabs] = useState<string[]>([]);
   const [activeNotePath, setActiveNotePath] = useState<string | null>(null);
   const [activeContent, setActiveContent] = useState("");
   const [tabModes, setTabModes] = useState<Record<string, AppMode>>({});
   const [sketchMode, setSketchMode] = useState(false);
-  const [view, setView] = useState<"browse" | "note">("browse");
+  const [view, setView] = useState<"home" | "note">("home");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [browseFilter, setBrowseFilter] = useState<BrowseFilter>("all");
   const [browseFolder, setBrowseFolder] = useState("");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [searchQuery, setSearchQuery] = useState("");
@@ -196,18 +209,11 @@ function App() {
     return t;
   }, []);
 
-  // Defensive: if the folder currently being browsed was deleted out from
-  // under the user (e.g. an ancestor folder removed), fall back to root.
-  useEffect(() => {
-    if (!browseFolder) return;
-    const folderExists = (entries: TreeEntry[], path: string): boolean =>
-      entries.some(
-        (e) => e.type === "folder" && (e.path === path || (path.startsWith(`${e.path}/`) && folderExists(e.children, path))),
-      );
-    if (!folderExists(tree, browseFolder)) {
-      setBrowseFolder("");
-    }
-  }, [tree, browseFolder]);
+  const refreshTrash = useCallback(async () => {
+    const t = await listTrash();
+    setTrash(t);
+    return t;
+  }, []);
 
   const selectNote = useCallback(
     async (path: string) => {
@@ -258,14 +264,14 @@ function App() {
       if (!isMainWindow) {
         // A secondary window that just lost its only tab (e.g. its tab got dragged/merged
         // elsewhere) has nothing left to show - close it, like a browser window with no tabs
-        // left, rather than leaving it sitting there as an empty browse view.
+        // left, rather than leaving it sitting there as an empty Home screen.
         await appWindow.close();
         return;
       }
       await flushActiveNote();
       setActiveNotePath(null);
       setActiveContent("");
-      setView("browse");
+      setView("home");
     },
     [selectNote, flushActiveNote],
   );
@@ -291,10 +297,33 @@ function App() {
 
   const handleBack = useCallback(async () => {
     await flushActiveNote();
-    setView("browse");
+    setView("home");
   }, [flushActiveNote]);
 
-  /** Opens a note in a new window, regardless of what's currently active/browsed. */
+  /** Nav click in the sidebar (All Notes/Starred/Recently Deleted) - switches Home's filter
+   * and brings it to the front, since a filter change is invisible while a note is open. */
+  const handleSelectFilter = useCallback(
+    async (filter: BrowseFilter) => {
+      await flushActiveNote();
+      setBrowseFilter(filter);
+      setView("home");
+    },
+    [flushActiveNote],
+  );
+
+  /** Opening a folder from a sidebar search result - since the sidebar no longer has a tree of
+   * its own to reveal it in, this hands off to Home's grid/tree browser instead. */
+  const handleOpenFolder = useCallback(
+    async (path: string) => {
+      await flushActiveNote();
+      setBrowseFilter("all");
+      setBrowseFolder(path);
+      setView("home");
+    },
+    [flushActiveNote],
+  );
+
+  /** Opens a note in a new window, regardless of what's currently active. */
   const handleDuplicateNote = useCallback(
     async (path: string) => {
       await flushActiveNote();
@@ -303,15 +332,16 @@ function App() {
     [flushActiveNote],
   );
 
-  /** Mirrors the current window (active note if one is open, else the folder being browsed) into a new window. */
+  /** Mirrors the current window's active note into a new window, or just opens a fresh
+   * window at Home if nothing's open here. */
   const handleDuplicateWindow = useCallback(async () => {
     await flushActiveNote();
     if (view === "note" && activeNotePathRef.current) {
       await openWindowInstance({ notePath: activeNotePathRef.current });
     } else {
-      await openWindowInstance({ browseFolder });
+      await openWindowInstance();
     }
-  }, [flushActiveNote, view, browseFolder]);
+  }, [flushActiveNote, view]);
 
   useEffect(() => {
     bootLog("boot effect running");
@@ -354,14 +384,13 @@ function App() {
             await loadPersistedSearchIndex();
             await syncSearchIndex(initialTree);
             setSearchIndexReady(true);
+            await refreshTrash();
           })();
           return;
         }
 
         const initialTree = await refreshTree();
-        if (target.browseFolder !== undefined) {
-          setBrowseFolder(target.browseFolder);
-        } else if (isMainWindow) {
+        if (isMainWindow) {
           const session = loadMainTabSession();
           const existingPaths = new Set(flattenNotes(initialTree).map((n) => n.path));
           const restoredTabs = session?.tabs.filter((p) => existingPaths.has(p)) ?? [];
@@ -376,7 +405,7 @@ function App() {
               setView("note");
               setTabMode(activePath, "edit");
             } catch {
-              // Fall back to browse if even the first restored note can't be read.
+              // Fall back to Home if even the first restored note can't be read.
             }
           }
         }
@@ -384,11 +413,18 @@ function App() {
 
         // Runs after first paint so a cold, unindexed vault never delays
         // startup - search falls back to a plain title filter until this
-        // resolves (see NotesBrowser), then switches over to the full index.
+        // resolves (see Sidebar), then switches over to the full index.
         void (async () => {
           await loadPersistedSearchIndex();
           await syncSearchIndex(initialTree);
           setSearchIndexReady(true);
+          // Only the main window sweeps expired trash, so two windows never race the same
+          // purge - every cold launch creates exactly one main-labeled window (see
+          // tauri.conf.json), so this still runs once per launch without extra machinery.
+          if (isMainWindow) {
+            await purgeExpiredTrash().catch(() => {});
+          }
+          await refreshTrash();
         })();
       } catch (err) {
         setBootError(err instanceof Error ? err.message : String(err));
@@ -588,36 +624,107 @@ function App() {
     [refreshTree],
   );
 
-  async function performDelete(action: ConfirmAction) {
-    try {
-      if (action.kind === "delete-note") {
-        await deleteNote(action.path);
-      } else {
-        await deleteFolder(action.path);
+  /** Soft-deletes a note/folder immediately - no confirmation, since Recently Deleted (see
+   * Sidebar) is now the undo path. Closes any open tabs it affects, same as before. */
+  const handleDeleteEntry = useCallback(
+    async (path: string, isFolder: boolean) => {
+      try {
+        if (isFolder) await deleteFolder(path);
+        else await deleteNote(path);
+        removePathFromIndex(path);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Delete failed");
+        return;
       }
-      removePathFromIndex(action.path);
+      await refreshTree();
+      await refreshTrash();
+      const affected = (p: string) => p === path || p.startsWith(`${path}/`);
+      const tabsBefore = tabsRef.current;
+      const tabsAfter = tabsBefore.filter((p) => !affected(p));
+      setTabs(tabsAfter);
+      const current = activeNotePathRef.current;
+      if (current && affected(current)) {
+        const neighbor = neighborTabAfterRemoval(tabsBefore, current, tabsAfter);
+        if (neighbor) {
+          await selectNote(neighbor);
+        } else if (!isMainWindow && tabsAfter.length === 0) {
+          await appWindow.close();
+          return;
+        } else {
+          setActiveNotePath(null);
+          setActiveContent("");
+          if (view === "note") setView("home");
+        }
+      }
+    },
+    [refreshTree, refreshTrash, selectNote, view],
+  );
+
+  const handleSetStarred = useCallback(
+    async (path: string, value: boolean) => {
+      try {
+        await setStarred(path, value);
+        await refreshTree();
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Couldn't update starred");
+      }
+    },
+    [refreshTree],
+  );
+
+  const handleRestoreFromTrash = useCallback(
+    async (items: TrashItem[]) => {
+      const restoredToRootTitles: string[] = [];
+      const restoredPaths: string[] = [];
+      let failures = 0;
+      for (const item of items) {
+        try {
+          const result = await restoreFromTrash(item.trashPath);
+          restoredPaths.push(result.path);
+          if (result.restoredToRoot) restoredToRootTitles.push(item.title);
+        } catch {
+          failures += 1;
+        }
+      }
+      const restoredTree = await refreshTree();
+      await refreshTrash();
+      // The restored note(s) fell out of the search index while trashed - add them back
+      // rather than waiting for a full syncSearchIndex pass over the whole vault.
+      const restoredNotes = flattenNotes(restoredTree).filter((n) =>
+        restoredPaths.some((p) => n.path === p || n.path.startsWith(`${p}/`)),
+      );
+      await Promise.all(
+        restoredNotes.map(async (n) => {
+          const content = await readNote(n.path).catch(() => "");
+          addNoteToIndex(n.path, content);
+        }),
+      );
+      if (restoredToRootTitles.length === 1) {
+        showToast(`Original folder no longer exists — restored "${restoredToRootTitles[0]}" to All Notes`);
+      } else if (restoredToRootTitles.length > 1) {
+        showToast(`Original folders no longer exist — restored ${restoredToRootTitles.length} items to All Notes`);
+      }
+      if (failures > 0) {
+        showToast(failures === 1 ? "Couldn't restore 1 item" : `Couldn't restore ${failures} items`);
+      }
+    },
+    [refreshTree, refreshTrash],
+  );
+
+  const handleRequestDeleteForever = useCallback((items: TrashItem[]) => {
+    setConfirmAction({
+      items: items.map((item) => ({ trashPath: item.trashPath, type: item.type, title: item.title })),
+    });
+  }, []);
+
+  async function performDeleteForever(action: ConfirmAction) {
+    try {
+      for (const item of action.items) {
+        await deleteForever(item.trashPath, item.type);
+      }
+      await refreshTrash();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Delete failed");
-    }
-    await refreshTree();
-    const affected = (p: string) => p === action.path || p.startsWith(`${action.path}/`);
-    const tabsBefore = tabsRef.current;
-    const tabsAfter = tabsBefore.filter((p) => !affected(p));
-    setTabs(tabsAfter);
-    const current = activeNotePathRef.current;
-    if (current && affected(current)) {
-      const neighbor = neighborTabAfterRemoval(tabsBefore, current, tabsAfter);
-      if (neighbor) {
-        await selectNote(neighbor);
-      } else if (!isMainWindow && tabsAfter.length === 0) {
-        setConfirmAction(null);
-        await appWindow.close();
-        return;
-      } else {
-        setActiveNotePath(null);
-        setActiveContent("");
-        if (view === "note") setView("browse");
-      }
     }
     setConfirmAction(null);
   }
@@ -628,10 +735,11 @@ function App() {
   );
 
   /** New-note action for the tab strip's "+" button: creates a sibling of the active tab's
-   * note, or falls back to the folder being browsed if no note is open. */
+   * note, or falls back to the vault root if no note is open. */
   const handleNewNoteInActiveFolder = useCallback(() => {
-    promptNewNote(activeNote ? activeNote.parentPath : browseFolder);
-  }, [promptNewNote, activeNote, browseFolder]);
+    promptNewNote(activeNote ? activeNote.parentPath : "");
+  }, [promptNewNote, activeNote]);
+
 
   const tabNotes = useMemo(() => {
     const byPath = new Map(flattenNotes(tree).map((n) => [n.path, n]));
@@ -646,7 +754,7 @@ function App() {
       if (!isMod) return;
       if (e.key.toLowerCase() === "n") {
         e.preventDefault();
-        promptNewNote(view === "note" && activeNote ? activeNote.parentPath : browseFolder);
+        promptNewNote(view === "note" && activeNote ? activeNote.parentPath : "");
       } else if (e.key.toLowerCase() === "w") {
         if (activeNotePathRef.current) {
           e.preventDefault();
@@ -654,13 +762,13 @@ function App() {
         }
       } else if (e.key.toLowerCase() === "f") {
         e.preventDefault();
-        setView("browse");
+        setSidebarOpen(true);
         setTimeout(() => searchInputRef.current?.focus(), 0);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [promptNewNote, browseFolder, view, activeNote, handleCloseTab]);
+  }, [promptNewNote, view, activeNote, handleCloseTab]);
 
   return (
     <div className="h-screen w-screen">
@@ -676,16 +784,13 @@ function App() {
           onBack={handleBack}
           mode={activeMode}
           onModeChange={handleModeChange}
-          sketchMode={sketchMode}
-          onToggleSketchMode={() => setSketchMode((v) => !v)}
           onDuplicateWindow={handleDuplicateWindow}
           settingsOpen={settingsOpen}
           onOpenSettings={() => setSettingsOpen(true)}
           onCloseSettings={() => setSettingsOpen(false)}
           toolbarVisible={toolbarVisible}
           onToggleToolbar={handleToggleToolbar}
-          showFolderBack={view === "browse" && settings.notesViewMode === "grid" && !!browseFolder}
-          onNavigateUp={() => setBrowseFolder(browseFolder.split("/").slice(0, -1).join("/"))}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
           tabStrip={
             tabNotes.length > 0 ? (
               <TabStrip
@@ -709,85 +814,110 @@ function App() {
               onClose={() => setSettingsOpen(false)}
             />
           ) : (
-            <main className="glass-panel shadow-app relative flex-1 overflow-hidden">
-              {bootStatus === "loading" && (
-                <div className="text-secondary flex h-full items-center justify-center text-sm">
-                  Loading notes…
-                </div>
-              )}
+            <>
+              <Sidebar
+                tree={tree}
+                trash={trash}
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                searchIndexReady={searchIndexReady}
+                searchInputRef={searchInputRef}
+                filter={browseFilter}
+                onSelectFilter={handleSelectFilter}
+                onOpenFolder={handleOpenFolder}
+                onOpenNote={(path) => {
+                  setSidebarOpen(false);
+                  handleOpenNote(path);
+                }}
+                onDuplicateNote={handleDuplicateNote}
+                onRename={handleRename}
+                onDeleteEntry={handleDeleteEntry}
+                onSetFolderColor={handleSetFolderColor}
+                onSetStarred={handleSetStarred}
+              />
 
-              {bootStatus === "error" && (
-                <div className="flex h-full items-center justify-center p-10 text-center">
-                  <div className="border-danger-soft bg-danger-soft text-danger max-w-md rounded-2xl border p-6 text-sm">
-                    <p className="font-medium">Couldn't access your notes folder</p>
-                    <p className="mt-1 opacity-80">{bootError}</p>
+              <main className="glass-panel shadow-app relative flex-1 overflow-hidden">
+                {bootStatus === "loading" && (
+                  <div className="text-secondary flex h-full items-center justify-center text-sm">
+                    Loading notes…
                   </div>
-                </div>
-              )}
+                )}
 
-              {bootStatus === "ready" && view === "browse" && (
-                <NotesBrowser
-                  tree={tree}
-                  browseFolder={browseFolder}
-                  onNavigate={setBrowseFolder}
-                  viewMode={settings.notesViewMode}
-                  onViewModeChange={(notesViewMode) => setSettings((s) => ({ ...s, notesViewMode }))}
-                  searchQuery={searchQuery}
-                  onSearchChange={setSearchQuery}
-                  searchIndexReady={searchIndexReady}
-                  searchInputRef={searchInputRef}
-                  onOpenNote={handleOpenNote}
-                  onDuplicateNote={handleDuplicateNote}
-                  onCreateNote={promptNewNote}
-                  onCreateFolder={promptNewFolder}
-                  onRename={handleRename}
-                  onDeleteNote={(path, title) => setConfirmAction({ kind: "delete-note", path, title })}
-                  onDeleteFolder={(path, title) => setConfirmAction({ kind: "delete-folder", path, title })}
-                  onMove={handleMove}
-                  onSetFolderColor={handleSetFolderColor}
-                />
-              )}
+                {bootStatus === "error" && (
+                  <div className="flex h-full items-center justify-center p-10 text-center">
+                    <div className="border-danger-soft bg-danger-soft text-danger max-w-md rounded-2xl border p-6 text-sm">
+                      <p className="font-medium">Couldn't access your notes folder</p>
+                      <p className="mt-1 opacity-80">{bootError}</p>
+                    </div>
+                  </div>
+                )}
 
-              {bootStatus === "ready" && view === "note" && activeNote && activeMode === "edit" && (
-                <Editor
-                  key={`${activeNote.path}:${reloadToken}`}
-                  notePath={activeNote.path}
-                  initialContent={activeContent}
-                  onChange={setActiveContent}
-                  onSave={async (content) => {
-                    await writeNote(activeNote.path, content);
-                    savedContentRef.current = content;
-                    updateNoteInIndex(activeNote.path, content);
-                    await broadcastNoteSaved(activeNote.path, content);
-                  }}
-                  toolbarVisible={toolbarVisible}
-                  sketchMode={sketchMode}
-                />
-              )}
+                {bootStatus === "ready" && view === "home" && (
+                  <Home
+                    tree={tree}
+                    trash={trash}
+                    filter={browseFilter}
+                    browseFolder={browseFolder}
+                    onBrowseFolderChange={setBrowseFolder}
+                    onOpenNote={handleOpenNote}
+                    onCreateNote={handleCreateNote}
+                    onPromptNewNote={promptNewNote}
+                    onPromptNewFolder={promptNewFolder}
+                    onDuplicateNote={handleDuplicateNote}
+                    onRename={handleRename}
+                    onDeleteEntry={handleDeleteEntry}
+                    onMove={handleMove}
+                    onSetFolderColor={handleSetFolderColor}
+                    onSetStarred={handleSetStarred}
+                    onRestoreFromTrash={handleRestoreFromTrash}
+                    onRequestDeleteForever={handleRequestDeleteForever}
+                  />
+                )}
 
-              {bootStatus === "ready" && view === "note" && activeNote && activeMode === "study" && (
-                <ErrorBoundary>
-                  <StudyView key={activeNote.path} notePath={activeNote.path} />
-                </ErrorBoundary>
-              )}
-            </main>
+                {bootStatus === "ready" && view === "note" && activeNote && activeMode === "edit" && (
+                  <Editor
+                    key={`${activeNote.path}:${reloadToken}`}
+                    notePath={activeNote.path}
+                    initialContent={activeContent}
+                    onChange={setActiveContent}
+                    onSave={async (content) => {
+                      await writeNote(activeNote.path, content);
+                      savedContentRef.current = content;
+                      updateNoteInIndex(activeNote.path, content);
+                      await broadcastNoteSaved(activeNote.path, content);
+                    }}
+                    toolbarVisible={toolbarVisible}
+                    sketchMode={sketchMode}
+                    onToggleSketchMode={() => setSketchMode((v) => !v)}
+                  />
+                )}
+
+                {bootStatus === "ready" && view === "note" && activeNote && activeMode === "study" && (
+                  <ErrorBoundary>
+                    <StudyView key={activeNote.path} notePath={activeNote.path} />
+                  </ErrorBoundary>
+                )}
+              </main>
+            </>
           )}
         </div>
 
         {confirmAction && (
           <ConfirmDialog
             title={
-              confirmAction.kind === "delete-note"
-                ? `Delete "${confirmAction.title}"?`
-                : `Delete folder "${confirmAction.title}"?`
+              confirmAction.items.length === 1
+                ? `Delete "${confirmAction.items[0].title}" forever?`
+                : `Delete ${confirmAction.items.length} items forever?`
             }
             description={
-              confirmAction.kind === "delete-note"
-                ? "This cannot be undone."
-                : "This deletes the folder and everything inside it. This cannot be undone."
+              confirmAction.items.some((item) => item.type === "folder")
+                ? "This permanently deletes the selected items, including everything inside any folders. This cannot be undone."
+                : "This cannot be undone."
             }
-            confirmLabel="Delete"
-            onConfirm={() => performDelete(confirmAction)}
+            confirmLabel="Delete Forever"
+            onConfirm={() => performDeleteForever(confirmAction)}
             onCancel={() => setConfirmAction(null)}
           />
         )}
@@ -796,12 +926,12 @@ function App() {
           <NewItemDialog
             kind={newItemDialog.kind}
             defaultName={newItemDialog.kind === "folder" ? "New Folder" : "Untitled"}
-            onCreate={(name, color, templateId) => {
+            onCreate={(name, color) => {
               setNewItemDialog(null);
               if (newItemDialog.kind === "folder") {
                 handleCreateFolder(newItemDialog.parentPath, name, color);
               } else {
-                handleCreateNote(newItemDialog.parentPath, name, templateId);
+                handleCreateNote(newItemDialog.parentPath, name);
               }
             }}
             onCancel={() => setNewItemDialog(null)}

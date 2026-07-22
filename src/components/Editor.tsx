@@ -2,17 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Bold,
+  Brush,
   ChevronDown,
   Code,
+  Crop,
   Highlighter,
   ImagePlus,
   Italic,
+  Layers,
   List,
   ListChecks,
   ListOrdered,
   Minus as DividerIcon,
   Palette,
+  Pilcrow,
   RemoveFormatting,
+  SeparatorHorizontal,
   Strikethrough,
   Table2,
   TextAlignCenter,
@@ -21,6 +26,7 @@ import {
   Trash2,
   Type,
   Underline,
+  WrapText,
 } from "lucide-react";
 import { Editor as MilkdownEditor, defaultValueCtx, editorViewCtx, rootCtx } from "@milkdown/kit/core";
 import type { Ctx } from "@milkdown/kit/ctx";
@@ -42,6 +48,9 @@ import type { BlockStyle, EditorSelectionState } from "../milkdown/setup";
 import { getSelectionState, registerMilkdownPlugins } from "../milkdown/setup";
 import { setBlockAlign, setTableColumnAlign } from "../milkdown/alignmentCommands";
 import type { BlockAlign } from "../milkdown/alignmentSchemaExtensions";
+import { setSelectedImageWrap, toggleSelectedImageCrop } from "../milkdown/imageCommands";
+import { IMAGE_CROP_CHANGED_EVENT } from "../milkdown/imageView";
+import type { ImageWrap } from "../milkdown/imageSchemaExtensions";
 import { liftOutOfList, toggleBulletList, toggleOrderedList, toggleTaskItem } from "../milkdown/listCommands";
 import {
   addTableColumn,
@@ -80,6 +89,7 @@ interface EditorProps {
   onSave: (content: string) => Promise<void>;
   toolbarVisible: boolean;
   sketchMode: boolean;
+  onToggleSketchMode: () => void;
 }
 
 const AUTOSAVE_DELAY_MS = 1000;
@@ -546,6 +556,167 @@ function TableMenu({
   );
 }
 
+const WRAP_OPTIONS: {
+  wrap: ImageWrap;
+  label: string;
+  hint: string;
+  icon: React.ComponentType<{ size?: number }>;
+}[] = [
+  { wrap: "inline", label: "In line", hint: "Moves with the text like a character", icon: Pilcrow },
+  { wrap: "wrap", label: "Wrap text", hint: "Text flows around the image", icon: WrapText },
+  { wrap: "break", label: "Break text", hint: "Text stops above, resumes below", icon: SeparatorHorizontal },
+  { wrap: "above", label: "Above text", hint: "Floats over the text - drag it anywhere", icon: Layers },
+];
+
+/** Doubles as both the "Insert image" button and, once an image is selected,
+ * a wrap-mode picker - mirrors TableMenu's dual-mode popover (insert grid vs.
+ * row/column editing) depending on `inTable`. `wrap` is null exactly when
+ * the current selection isn't an image (see getSelectedImageWrap), which is
+ * also what decides whether clicking opens the picker or just opens the file
+ * dialog straight away. */
+function ImageMenu({
+  wrap,
+  onInsert,
+  onSetWrap,
+}: {
+  wrap: ImageWrap | null;
+  onInsert: () => void;
+  onSetWrap: (wrap: ImageWrap) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const imageSelected = wrap !== null;
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => (imageSelected ? setOpen((v) => !v) : onInsert())}
+        title={imageSelected ? "Image text wrapping" : "Insert image"}
+        aria-label={imageSelected ? "Image text wrapping" : "Insert image"}
+        aria-expanded={imageSelected ? open : undefined}
+        aria-pressed={imageSelected}
+        className={`btn-ghost h-7 w-7 shrink-0 ${imageSelected ? "bg-accent-soft text-accent" : ""}`}
+      >
+        <ImagePlus size={14} />
+      </button>
+      {open && imageSelected && (
+        <ToolbarPopover
+          anchorRef={anchorRef}
+          onClose={() => setOpen(false)}
+          className="glass-panel shadow-app-lg border-subtle w-56 overflow-hidden rounded-lg border py-1 text-sm"
+        >
+          {WRAP_OPTIONS.map((opt) => (
+            <button
+              key={opt.wrap}
+              type="button"
+              className={`hover:bg-surface-hover flex w-full flex-col items-start px-3 py-1.5 text-left ${
+                wrap === opt.wrap ? "text-accent bg-accent-soft" : "text-primary"
+              }`}
+              onClick={() => {
+                onSetWrap(opt.wrap);
+                setOpen(false);
+              }}
+            >
+              <span>{opt.label}</span>
+              <span className="text-tertiary text-xs">{opt.hint}</span>
+            </button>
+          ))}
+        </ToolbarPopover>
+      )}
+    </div>
+  );
+}
+
+/** Small contextual toolbar anchored directly beneath the selected image,
+ * so wrap mode / crop can be changed without reaching for the top toolbar's
+ * Insert Image button (ImageMenu above). Mirrors its options but as a
+ * compact icon row, and shows/hides itself purely off `imageWrap` - no open
+ * state of its own, since image selection is already the trigger.
+ *
+ * The selected image's NodeView (imageView.ts) is the only thing that knows
+ * its own DOM node - it's found here by querying for the `.selected` class
+ * it toggles in `selectNode`/`deselectNode`, the same coupling ImageMenu's
+ * "wrap" prop already relies on indirectly via getSelectedImageWrap. */
+function SelectedImageToolbar({
+  imageWrap,
+  cropping,
+  containerRef,
+  onSetWrap,
+  onToggleCrop,
+}: {
+  imageWrap: ImageWrap | null;
+  cropping: boolean;
+  containerRef: React.RefObject<HTMLElement | null>;
+  onSetWrap: (wrap: ImageWrap) => void;
+  onToggleCrop: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden" });
+
+  // Repositions every frame rather than off a fixed set of triggers: the
+  // anchor can move for reasons this component has no direct signal for
+  // (resize/crop drags mutate the NodeView's DOM straight outside React,
+  // switching wrap mode reflows surrounding text, scrolling moves it in the
+  // viewport). A rAF loop only runs while an image is actually selected, so
+  // the cost is one small layout read per frame in an otherwise rare state.
+  useEffect(() => {
+    if (imageWrap === null) return;
+    let frame: number;
+    function place() {
+      const anchor = containerRef.current?.querySelector<HTMLElement>(".milkdown-image-view.selected");
+      if (!anchor) {
+        setStyle((prev) => (prev.visibility === "hidden" ? prev : { position: "fixed", visibility: "hidden" }));
+      } else {
+        const rect = anchor.getBoundingClientRect();
+        const width = popoverRef.current?.offsetWidth ?? 0;
+        const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, 8), window.innerWidth - width - 8);
+        setStyle({ position: "fixed", top: rect.bottom + 8, left, zIndex: 50 });
+      }
+      frame = requestAnimationFrame(place);
+    }
+    place();
+    return () => cancelAnimationFrame(frame);
+  }, [imageWrap, containerRef]);
+
+  if (imageWrap === null) return null;
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      style={style}
+      className="glass-panel shadow-app-lg border-subtle flex items-center gap-0.5 rounded-lg border p-1"
+    >
+      {WRAP_OPTIONS.map((opt) => (
+        <button
+          key={opt.wrap}
+          type="button"
+          title={`${opt.label} – ${opt.hint}`}
+          aria-label={opt.label}
+          aria-pressed={imageWrap === opt.wrap}
+          onClick={() => onSetWrap(opt.wrap)}
+          className={`btn-ghost h-7 w-7 shrink-0 ${imageWrap === opt.wrap ? "bg-accent-soft text-accent" : ""}`}
+        >
+          <opt.icon size={14} />
+        </button>
+      ))}
+      <div className="divider mx-0.5 h-5 w-px shrink-0" />
+      <button
+        type="button"
+        title="Crop image"
+        aria-label="Crop image"
+        aria-pressed={cropping}
+        onClick={onToggleCrop}
+        className={`btn-ghost h-7 w-7 shrink-0 ${cropping ? "bg-accent-soft text-accent" : ""}`}
+      >
+        <Crop size={14} />
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
 function NoteEditor({
   notePath,
   initialContent,
@@ -553,6 +724,7 @@ function NoteEditor({
   onSave,
   toolbarVisible,
   sketchMode,
+  onToggleSketchMode,
 }: EditorProps) {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -567,9 +739,26 @@ function NoteEditor({
     inTable: false,
     align: "left",
     cellAlign: "left",
+    imageWrap: null,
   });
   const latestContentRef = useRef(initialContent);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Crop-mode-active lives in the selected image's NodeView, not in node
+  // attrs (see imageView.ts) - mirrored here purely so the toolbar's Crop
+  // button can show a pressed state, via the bubbling custom event the
+  // NodeView fires whenever it enters/exits crop mode.
+  const [imageCropping, setImageCropping] = useState(false);
+  useEffect(() => {
+    const onCropChanged = (event: Event) => {
+      setImageCropping((event as CustomEvent<{ cropping: boolean }>).detail?.cropping ?? false);
+    };
+    document.addEventListener(IMAGE_CROP_CHANGED_EVENT, onCropChanged);
+    return () => document.removeEventListener(IMAGE_CROP_CHANGED_EVENT, onCropChanged);
+  }, []);
+  useEffect(() => {
+    if (selectionState.imageWrap === null) setImageCropping(false);
+  }, [selectionState.imageWrap]);
 
   const debouncedSave = useDebouncedCallback(async (value: string) => {
     setStatus("saving");
@@ -820,18 +1009,48 @@ function NoteEditor({
     [run],
   );
 
-  async function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  async function insertImageFile(file: File) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const relPath = await writeAttachment(notePath, file.name, bytes);
+      const relPath = await writeAttachment(notePath, file.name || "pasted-image.png", bytes);
       run(callCommand(insertImageCommand.key, { src: relPath, alt: file.name }));
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Couldn't attach that image");
       setTimeout(() => setUploadError(null), 4000);
     }
+  }
+
+  async function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    insertImageFile(file);
+  }
+
+  // Pastes an actual image (e.g. a screenshot, or one copied from a browser
+  // or Preview) the same way the file-picker path does; anything else in the
+  // clipboard (text/markdown) is left alone for Milkdown's own clipboard
+  // plugin to handle. Wired up as `onPasteCapture` (not `onPaste`) and calls
+  // stopPropagation, not just preventDefault: ProseMirror's own paste
+  // handling is a plain bubble-phase listener on the editor's DOM node
+  // (prosemirror-view registers it with no capture flag), and its fallback
+  // for an unrecognized paste is to let the browser's native contenteditable
+  // paste run - which inserts the image itself as a second, parallel
+  // `<img src="blob:...">` node alongside the one this handler inserts via
+  // writeAttachment, since a blob: URL is never a valid note-relative
+  // attachment path. Handling this in the capture phase on an ancestor runs
+  // before the event ever reaches that bubble-phase listener, so
+  // stopPropagation here keeps it from running at all for image pastes -
+  // non-image paste events fall through untouched to continue their normal
+  // capture/bubble path into Milkdown's own handling.
+  function handleEditorPaste(e: React.ClipboardEvent) {
+    const file = Array.from(e.clipboardData.items)
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+      ?.getAsFile();
+    if (!file) return;
+    e.preventDefault();
+    e.stopPropagation();
+    insertImageFile(file);
   }
 
   const emphasisGroup: ToolbarAction[] = [
@@ -916,23 +1135,17 @@ function NoteEditor({
     isActive: selectionState.align === align,
   }));
 
-  const trailingButtons: ToolbarAction[] = [
-    {
-      icon: DividerIcon,
-      label: "Divider",
-      action: () => runAndSync((ctx) => callCommand(insertHrCommand.key)(ctx)),
-    },
-    {
-      icon: ImagePlus,
-      label: "Insert image",
-      action: () => fileInputRef.current?.click(),
-    },
-    {
-      icon: Code,
-      label: "Code block",
-      action: () => runAndSync((ctx) => callCommand(createCodeBlockCommand.key)(ctx)),
-    },
-  ];
+  const dividerButton: ToolbarAction = {
+    icon: DividerIcon,
+    label: "Divider",
+    action: () => runAndSync((ctx) => callCommand(insertHrCommand.key)(ctx)),
+  };
+
+  const codeBlockButton: ToolbarAction = {
+    icon: Code,
+    label: "Code block",
+    action: () => runAndSync((ctx) => callCommand(createCodeBlockCommand.key)(ctx)),
+  };
 
   return (
     <div className="relative flex h-full flex-col">
@@ -949,10 +1162,22 @@ function NoteEditor({
           onUndo={handleUndo}
           onRedo={handleRedo}
           onClear={handleClearSketch}
+          onExit={onToggleSketchMode}
         />
       )}
       {toolbarVisible && !sketchMode && (
         <div className="border-subtle flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b px-3">
+          <button
+            type="button"
+            onClick={onToggleSketchMode}
+            title="Sketch on this note"
+            aria-label="Toggle sketch mode"
+            aria-pressed={sketchMode}
+            className="btn-ghost h-7 w-7 shrink-0"
+          >
+            <Brush size={14} />
+          </button>
+          <div className="divider mx-1 h-5 w-px shrink-0" />
           <TextStyleDropdown
             blockStyle={selectionState.blockStyle}
             onSelect={(style) =>
@@ -988,19 +1213,41 @@ function NoteEditor({
             onSetCellColor={(color) => runAndSync((ctx) => setTableCellBackground(ctx, color))}
             onSetCellAlign={(align) => runAndSync((ctx) => setTableColumnAlign(ctx, align))}
           />
-          {trailingButtons.map(({ icon: Icon, label, action, isActive }) => (
+          <button
+            type="button"
+            onClick={dividerButton.action}
+            title={dividerButton.label}
+            aria-label={dividerButton.label}
+            className="btn-ghost h-7 w-7 shrink-0"
+          >
+            <dividerButton.icon size={14} />
+          </button>
+          <ImageMenu
+            wrap={selectionState.imageWrap}
+            onInsert={() => fileInputRef.current?.click()}
+            onSetWrap={(wrap) => runAndSync((ctx) => setSelectedImageWrap(ctx, wrap))}
+          />
+          {selectionState.imageWrap !== null && (
             <button
-              key={label}
               type="button"
-              onClick={action}
-              title={label}
-              aria-label={label}
-              aria-pressed={isActive}
-              className={`btn-ghost h-7 w-7 shrink-0 ${isActive ? "bg-accent-soft text-accent" : ""}`}
+              onClick={() => runAndSync((ctx) => toggleSelectedImageCrop(ctx))}
+              title="Crop image"
+              aria-label="Crop image"
+              aria-pressed={imageCropping}
+              className={`btn-ghost h-7 w-7 shrink-0 ${imageCropping ? "bg-accent-soft text-accent" : ""}`}
             >
-              <Icon size={14} />
+              <Crop size={14} />
             </button>
-          ))}
+          )}
+          <button
+            type="button"
+            onClick={codeBlockButton.action}
+            title={codeBlockButton.label}
+            aria-label={codeBlockButton.label}
+            className="btn-ghost h-7 w-7 shrink-0"
+          >
+            <codeBlockButton.icon size={14} />
+          </button>
           <div className="divider mx-1 h-5 w-px shrink-0" />
           <LookDropdown look={look} onSelect={handleSelectLook} />
           {uploadError && <span className="text-danger ml-2 shrink-0 text-xs">{uploadError}</span>}
@@ -1020,6 +1267,7 @@ function NoteEditor({
         <div
           ref={sketchWrapperRef}
           className="relative min-h-full"
+          onPasteCapture={handleEditorPaste}
           onMouseDown={(e) => {
             if (e.target !== e.currentTarget) return;
             e.preventDefault();
@@ -1039,6 +1287,14 @@ function NoteEditor({
           />
         </div>
       </div>
+
+      <SelectedImageToolbar
+        imageWrap={sketchMode ? null : selectionState.imageWrap}
+        cropping={imageCropping}
+        containerRef={sketchWrapperRef}
+        onSetWrap={(wrap) => runAndSync((ctx) => setSelectedImageWrap(ctx, wrap))}
+        onToggleCrop={() => runAndSync((ctx) => toggleSelectedImageCrop(ctx))}
+      />
 
       <div className="text-tertiary pointer-events-none absolute bottom-5 right-7 text-xs transition-opacity duration-300 @max-sm:bottom-2 @max-sm:right-3">
         {status === "saving" && "Saving…"}

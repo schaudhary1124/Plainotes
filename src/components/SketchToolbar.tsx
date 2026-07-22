@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eraser, Highlighter, PenTool, Redo2, Trash2, Undo2 } from "lucide-react";
+import { Brush, Eraser, Highlighter, PenTool, Redo2, Trash2, Undo2 } from "lucide-react";
 import type { SketchTool } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -35,6 +35,7 @@ interface SketchToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onClear: () => void;
+  onExit: () => void;
 }
 
 const TOOLS: { tool: SketchTool; label: string; icon: typeof PenTool }[] = [
@@ -55,11 +56,25 @@ export function SketchToolbar({
   onUndo,
   onRedo,
   onClear,
+  onExit,
 }: SketchToolbarProps) {
   const [confirmClear, setConfirmClear] = useState(false);
 
   return (
     <div className="border-subtle flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b px-3">
+      <button
+        type="button"
+        onClick={onExit}
+        title="Exit sketch mode"
+        aria-label="Exit sketch mode"
+        aria-pressed="true"
+        className="btn-ghost bg-accent-soft text-accent h-7 w-7 shrink-0"
+      >
+        <Brush size={14} />
+      </button>
+
+      <div className="divider mx-1 h-5 w-px shrink-0" />
+
       {TOOLS.map(({ tool: t, label, icon: Icon }) => (
         <button
           key={t}

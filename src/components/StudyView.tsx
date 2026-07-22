@@ -125,6 +125,17 @@ export function StudyView({ notePath }: StudyViewProps) {
       >
         <HelpCircle size={14} /> Add multiple choice
       </button>
+      <button
+        type="button"
+        onClick={() => canPractice && setSubMode("practice")}
+        disabled={!canPractice}
+        title={canPractice ? "Practice cards" : "Add a question to start practicing"}
+        className={`bg-accent-solid flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-white transition-colors duration-150 ${
+          canPractice ? "hover:brightness-110" : "cursor-not-allowed opacity-40"
+        }`}
+      >
+        <GraduationCap size={14} /> Practice
+      </button>
     </div>
   );
 
@@ -139,41 +150,16 @@ export function StudyView({ notePath }: StudyViewProps) {
           <span>{mcqCount} multiple choice</span>
         </div>
 
-        <div
-          role="tablist"
-          aria-label="Toggle between managing and practicing cards"
-          className="glass-surface relative ml-auto flex h-8 w-44 shrink-0 items-center overflow-hidden rounded-full border-0 p-1 text-xs font-medium"
-        >
-          <span
-            className="bg-accent-solid shadow-app absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full transition-transform duration-200 ease-out"
-            style={{ transform: subMode === "practice" ? "translateX(100%)" : "translateX(0)" }}
-          />
+        {subMode === "practice" && (
           <button
             type="button"
-            role="tab"
-            aria-selected={subMode === "manage"}
             onClick={() => setSubMode("manage")}
-            title="Manage cards"
-            className={`z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-1 text-center whitespace-nowrap transition-colors duration-150 ${
-              subMode === "manage" ? "text-white" : "text-secondary"
-            }`}
+            title="Back to managing cards"
+            className="btn-ghost ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
           >
             <Pencil size={12} className="shrink-0" /> Manage
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subMode === "practice"}
-            onClick={() => canPractice && setSubMode("practice")}
-            disabled={!canPractice}
-            title={canPractice ? "Practice cards" : "Add a question to start practicing"}
-            className={`z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-1 text-center whitespace-nowrap transition-colors duration-150 ${
-              subMode === "practice" ? "text-white" : "text-secondary"
-            } ${!canPractice ? "cursor-not-allowed opacity-40" : ""}`}
-          >
-            <GraduationCap size={12} className="shrink-0" /> Practice
-          </button>
-        </div>
+        )}
       </div>
 
       {subMode === "manage" ? (
